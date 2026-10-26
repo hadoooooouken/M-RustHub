@@ -4,6 +4,18 @@ Native, lightweight Rust configuration utility for **MCHOSE G3 V2**.
 
 Zero Electron. Zero Chinese cloud telemetry. 100% offline and instant.
 
+[![Latest Release](https://img.shields.io/github/v/release/hadoooooouken/M-RustHub?style=for-the-badge&logo=github&color=3b82f6)](https://github.com/hadoooooouken/M-RustHub/releases/latest)
+[![Download Binary](https://img.shields.io/badge/Download-Release%20Binary-10b981?style=for-the-badge&logo=windows)](https://github.com/hadoooooouken/M-RustHub/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
+
+> 📥 **[Download Latest Release](https://github.com/hadoooooouken/M-RustHub/releases/latest)** | 📦 **[All Releases](https://github.com/hadoooooouken/M-RustHub/releases)**
+
+---
+
+<p align="center">
+  <img src="screenshots/mrusthub-mainwindow.webp" alt="M-RustHub GUI" width="620" />
+</p>
+
 ---
 
 ## ⚡ Comparison with Official M HUB Client
@@ -63,7 +75,7 @@ Features available in GUI:
 .\m_rusthub.exe set-stage 2
 ```
 
-#### Change DPI value (100 to 12000 DPI):
+#### Change DPI value (100 to 12000 DPI, step 100):
 ```powershell
 # Set current stage to 1600 DPI:
 .\m_rusthub.exe set-dpi 1600
