@@ -224,8 +224,19 @@ impl MchoseMouse {
         Ok(mouse)
     }
 
+    /// Discards any stale unread packets from the OS HID input buffer
+    fn flush_input(&self) {
+        let mut buf = [0u8; 65];
+        while let Ok(n) = self.device.read_timeout(&mut buf, 0) {
+            if n == 0 {
+                break;
+            }
+        }
+    }
+
     /// Sends a 64-byte payload with report ID 0 (total 65 bytes)
     fn write_packet(&self, payload: &[u8]) -> Result<(), DriverError> {
+        self.flush_input();
         let mut pkt = [0u8; 65];
         pkt[0] = 0x00; // Report ID 0
         let len = payload.len().min(64);
@@ -252,6 +263,25 @@ impl MchoseMouse {
         Ok(out)
     }
 
+    /// Reads packets until a response matching `expected_cmd` is received or timeout expires
+    fn read_response(&self, expected_cmd: u8, timeout_ms: u64) -> Result<[u8; 64], DriverError> {
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_millis(timeout_ms);
+        loop {
+            let elapsed = start.elapsed();
+            if elapsed >= timeout {
+                return Err(DriverError::Protocol(format!(
+                    "Read timeout waiting for response to cmd {expected_cmd}"
+                )));
+            }
+            let remaining_ms = (timeout - elapsed).as_millis().max(1) as i32;
+            let pkt = self.read_packet(remaining_ms)?;
+            if pkt[0] == 170 && pkt[1] == expected_cmd {
+                return Ok(pkt);
+            }
+        }
+    }
+
     /// Query firmware version and build date
     pub fn query_version(&self) -> Result<(String, String), DriverError> {
         let cmd = [85, 3];
@@ -262,13 +292,11 @@ impl MchoseMouse {
             if self.write_packet(&cmd).is_err() {
                 continue;
             }
-            if let Ok(resp) = self.read_packet(150) {
-                if resp[0] == 170 && resp[1] == 3 {
-                    let fw = String::from_utf8_lossy(&resp[8..23]).trim_matches('\0').trim().to_string();
-                    let date = String::from_utf8_lossy(&resp[26..32]).trim_matches('\0').trim().to_string();
-                    if !fw.is_empty() {
-                        return Ok((fw, date));
-                    }
+            if let Ok(resp) = self.read_response(3, 150) {
+                let fw = String::from_utf8_lossy(&resp[8..23]).trim_matches('\0').trim().to_string();
+                let date = String::from_utf8_lossy(&resp[26..32]).trim_matches('\0').trim().to_string();
+                if !fw.is_empty() {
+                    return Ok((fw, date));
                 }
             }
         }
@@ -285,13 +313,11 @@ impl MchoseMouse {
             if self.write_packet(&cmd).is_err() {
                 continue;
             }
-            if let Ok(resp) = self.read_packet(150) {
-                if resp[0] == 170 && resp[1] == 48 {
-                    return Ok(BatteryStatus {
-                        percent: resp[8],
-                        charging: resp[9] != 0,
-                    });
-                }
+            if let Ok(resp) = self.read_response(48, 150) {
+                return Ok(BatteryStatus {
+                    percent: resp[8],
+                    charging: resp[9] != 0,
+                });
             }
         }
         Err(DriverError::Protocol("Failed to read battery status".to_string()))
@@ -312,10 +338,8 @@ impl MchoseMouse {
             if self.write_packet(&cmd).is_err() {
                 continue;
             }
-            if let Ok(resp) = self.read_packet(150) {
-                if resp[0] == 170 && resp[1] == 237 {
-                    return Ok(resp[8] != 0);
-                }
+            if let Ok(resp) = self.read_response(237, 150) {
+                return Ok(resp[8] != 0);
             }
         }
         Ok(false)
@@ -331,54 +355,52 @@ impl MchoseMouse {
             if self.write_packet(&cmd).is_err() {
                 continue;
             }
-            if let Ok(resp) = self.read_packet(150) {
-                if resp[0] == 170 && resp[1] == 14 {
-                    // Check for uninitialized / offline state (dongle has not yet linked with mouse)
-                    let dpi_stage1 = (resp[13] as u16) | ((resp[14] as u16) << 8);
-                    let is_uninitialized = (resp[13] == 0 && resp[14] == 0 && resp[15] == 0)
-                        || (resp[13] == 255 && resp[14] == 255 && resp[15] == 255)
-                        || resp[11] == 0
-                        || dpi_stage1 < 50;
+            if let Ok(resp) = self.read_response(14, 150) {
+                // Check for uninitialized / offline state (dongle has not yet linked with mouse)
+                let dpi_stage1 = (resp[13] as u16) | ((resp[14] as u16) << 8);
+                let is_uninitialized = (resp[13] == 0 && resp[14] == 0 && resp[15] == 0)
+                    || (resp[13] == 255 && resp[14] == 255 && resp[15] == 255)
+                    || resp[11] == 0
+                    || dpi_stage1 < 50;
 
-                    if is_uninitialized {
-                        continue;
-                    }
-
-                    let report_rate = PollingRate::from_index(resp[10].saturating_sub(1));
-                    let dpi_stages_count = (resp[11] as usize).clamp(1, 6);
-                    let active_dpi_stage = (resp[12] as usize).clamp(1, dpi_stages_count);
-
-                    let mut dpi_stages = [800, 1600, 2400, 3200, 5000, 12000];
-                    for i in 0..6 {
-                        let offset = 13 + i * 2;
-                        let val = (resp[offset] as u16) | ((resp[offset + 1] as u16) << 8);
-                        if val >= 50 && val <= 50000 {
-                            dpi_stages[i] = val;
-                        }
-                    }
-
-                    let scroll_flag = resp[48];
-                    let lod = Lod::from_u8(resp[49]);
-                    let sensor_flags = resp[50];
-                    let debounce_ms = resp[51];
-                    let sleep_minutes = resp[52];
-                    let highspeed_mode = resp[53];
-                    let sensor_angle = resp[55] as i8;
-
-                    return Ok(MouseConfig {
-                        report_rate,
-                        active_dpi_stage,
-                        dpi_stages_count,
-                        dpi_stages,
-                        lod,
-                        debounce_ms,
-                        sleep_minutes,
-                        sensor_flags,
-                        scroll_flag,
-                        highspeed_mode,
-                        sensor_angle,
-                    });
+                if is_uninitialized {
+                    continue;
                 }
+
+                let report_rate = PollingRate::from_index(resp[10].saturating_sub(1));
+                let dpi_stages_count = (resp[11] as usize).clamp(1, 6);
+                let active_dpi_stage = (resp[12] as usize).clamp(1, dpi_stages_count);
+
+                let mut dpi_stages = [800, 1600, 2400, 3200, 5000, 12000];
+                for i in 0..6 {
+                    let offset = 13 + i * 2;
+                    let val = (resp[offset] as u16) | ((resp[offset + 1] as u16) << 8);
+                    if val >= 50 && val <= 50000 {
+                        dpi_stages[i] = val;
+                    }
+                }
+
+                let scroll_flag = resp[48];
+                let lod = Lod::from_u8(resp[49]);
+                let sensor_flags = resp[50];
+                let debounce_ms = resp[51];
+                let sleep_minutes = resp[52];
+                let highspeed_mode = resp[53];
+                let sensor_angle = resp[55] as i8;
+
+                return Ok(MouseConfig {
+                    report_rate,
+                    active_dpi_stage,
+                    dpi_stages_count,
+                    dpi_stages,
+                    lod,
+                    debounce_ms,
+                    sleep_minutes,
+                    sensor_flags,
+                    scroll_flag,
+                    highspeed_mode,
+                    sensor_angle,
+                });
             }
         }
         Err(DriverError::Protocol("Failed to read mouse configuration (device offline or uninitialized)".to_string()))
@@ -426,6 +448,8 @@ impl MchoseMouse {
     pub fn set_config(&self, cfg: &MouseConfig) -> Result<(), DriverError> {
         let pkt = Self::build_config_packet(cfg);
         self.write_packet(&pkt)?;
+        // Read ACK packet [170, 15, ...] from mouse to avoid leaving it in the OS HID queue
+        let _ = self.read_response(15, 150);
         std::thread::sleep(std::time::Duration::from_millis(30));
         Ok(())
     }
