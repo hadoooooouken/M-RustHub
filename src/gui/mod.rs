@@ -869,7 +869,7 @@ fn start_worker(
 
 fn target_window_height(stages_count: usize) -> f32 {
     let count = stages_count.clamp(1, 6);
-    515.0 + (count - 1) as f32 * 43.0
+    445.0 + (count - 1) as f32 * 43.0
 }
 
 // ============================================================================
@@ -952,6 +952,13 @@ impl App {
             None
         };
 
+        let initial_stages = if init.is_connected {
+            init.config.dpi_stages_count
+        } else {
+            1
+        };
+        let initial_h = target_window_height(initial_stages);
+
         Self {
             tx_req,
             rx_resp,
@@ -962,7 +969,7 @@ impl App {
             is_connected: init.is_connected,
             has_unsaved_changes: false,
             status_msg,
-            current_window_h: 0.0,
+            current_window_h: initial_h,
         }
     }
 
@@ -1072,16 +1079,8 @@ impl App {
             }
         }
     }
-}
 
-impl eframe::App for App {
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.handle_worker_messages(ctx);
-        self.has_unsaved_changes = self.config != self.saved_config;
-        ctx.request_repaint_after(Duration::from_millis(200));
-    }
-
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    pub fn render_ui(&mut self, ui: &mut egui::Ui) {
         // Enforce consistent outer padding of 14 px on all 4 sides
         let frame_resp = egui::Frame::new()
             .fill(COLOR_BG_MAIN)
@@ -1389,9 +1388,9 @@ impl eframe::App for App {
                                             inp.pointer.button_clicked(egui::PointerButton::Primary)
                                                 && inp.pointer.interact_pos().is_some_and(|pos| {
                                                     row_resp.rect.contains(pos)
-                                                        && !slider_rect.contains(pos)
-                                                        && !btn_minus_rect.contains(pos)
-                                                        && !btn_plus_rect.contains(pos)
+                                                         && !slider_rect.contains(pos)
+                                                         && !btn_minus_rect.contains(pos)
+                                                         && !btn_plus_rect.contains(pos)
                                                 })
                                         });
 
@@ -1770,6 +1769,18 @@ impl eframe::App for App {
     }
 }
 
+impl eframe::App for App {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.handle_worker_messages(ctx);
+        self.has_unsaved_changes = self.config != self.saved_config;
+        ctx.request_repaint_after(Duration::from_millis(200));
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.render_ui(ui);
+    }
+}
+
 pub fn run_gui() -> eframe::Result {
     let init_state = AppInitState::detect();
     let initial_stages = if init_state.is_connected {
@@ -1787,7 +1798,7 @@ pub fn run_gui() -> eframe::Result {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([680.0, initial_h])
-            .with_min_inner_size([680.0, 480.0])
+            .with_min_inner_size([680.0, 430.0])
             .with_max_inner_size([680.0, 850.0])
             .with_resizable(false)
             .with_maximize_button(false)
@@ -2302,5 +2313,76 @@ mod tests {
         app.set_dpi_stages_count(2);
         assert_eq!(app.config.dpi_stages_count, 2);
         assert_eq!(app.config.active_dpi_stage, 2, "Active stage clamped to count");
+    }
+
+    #[test]
+    fn test_target_window_height_values_and_clamping() {
+        assert_eq!(target_window_height(1), 445.0);
+        assert_eq!(target_window_height(2), 488.0);
+        assert_eq!(target_window_height(3), 531.0);
+        assert_eq!(target_window_height(4), 574.0);
+        assert_eq!(target_window_height(5), 617.0);
+        assert_eq!(target_window_height(6), 660.0);
+
+        // Clamping boundaries (min 1, max 6)
+        assert_eq!(target_window_height(0), 445.0);
+        assert_eq!(target_window_height(10), 660.0);
+
+        // Each additional DPI stage increments height by exactly 43 px
+        for s in 1..6 {
+            assert_eq!(target_window_height(s + 1) - target_window_height(s), 43.0);
+        }
+    }
+
+    #[test]
+    fn test_window_height_min_inner_size_compliance() {
+        let ctx = egui::Context::default();
+        let mut fonts = egui::FontDefinitions::default();
+        if let Ok(data) = std::fs::read("C:\\Windows\\Fonts\\segoeui.ttf") {
+            fonts.font_data.insert(
+                "segoe_ui".to_owned(),
+                std::sync::Arc::new(egui::FontData::from_owned(data)),
+            );
+            fonts
+                .families
+                .entry(egui::FontFamily::Proportional)
+                .or_default()
+                .insert(0, "segoe_ui".to_owned());
+            ctx.set_fonts(fonts);
+        }
+        for stages in 1..=6 {
+            let mut app = create_test_app();
+            app.config.dpi_stages_count = stages;
+            let raw_input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(680.0, 1000.0),
+                )),
+                ..Default::default()
+            };
+            for _ in 0..2 {
+                let mut out = ctx.run_ui(raw_input.clone(), |ctx| {
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::NONE)
+                        .show(ctx, |ui| {
+                            app.render_ui(ui);
+                        });
+                });
+                out.textures_delta.clear();
+            }
+            // Real layout height at 1 DPI level must exceed min_inner_size (430.0)
+            // so no bottom empty gap remains:
+            assert!(
+                app.current_window_h >= 430.0,
+                "Layout height {} must be >= min_inner_size 430.0 for stage count {}",
+                app.current_window_h, stages
+            );
+            // And must stay within max_inner_size (850.0)
+            assert!(
+                app.current_window_h <= 850.0,
+                "Layout height {} must be <= max_inner_size 850.0 for stage count {}",
+                app.current_window_h, stages
+            );
+        }
     }
 }
