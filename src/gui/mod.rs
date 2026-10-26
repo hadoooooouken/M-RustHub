@@ -50,14 +50,17 @@ const STAGE_COLORS: [Color32; 6] = [
 // ============================================================================
 // TYPOGRAPHY / FONTS
 // ============================================================================
+pub fn font_family_bold() -> egui::FontFamily {
+    egui::FontFamily::Name("Bold".into())
+}
 fn font_app_title() -> egui::FontId {
-    egui::FontId::new(16.5, egui::FontFamily::Proportional)
+    egui::FontId::new(16.5, font_family_bold())
 }
 fn font_device_sub() -> egui::FontId {
-    egui::FontId::new(10.0, egui::FontFamily::Proportional)
+    egui::FontId::new(10.0, font_family_bold())
 }
 fn font_section_title() -> egui::FontId {
-    egui::FontId::new(12.5, egui::FontFamily::Proportional)
+    egui::FontId::new(12.5, font_family_bold())
 }
 fn font_control_text() -> egui::FontId {
     egui::FontId::new(13.0, egui::FontFamily::Proportional)
@@ -67,6 +70,44 @@ fn font_dpi_value() -> egui::FontId {
 }
 fn font_small_caption() -> egui::FontId {
     egui::FontId::new(11.0, egui::FontFamily::Proportional)
+}
+
+pub fn setup_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    if let Ok(data) = std::fs::read("C:\\Windows\\Fonts\\segoeui.ttf") {
+        fonts.font_data.insert(
+            "segoe_ui".to_owned(),
+            std::sync::Arc::new(egui::FontData::from_owned(data)),
+        );
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .insert(0, "segoe_ui".to_owned());
+    }
+
+    if let Ok(data_bold) = std::fs::read("C:\\Windows\\Fonts\\segoeuib.ttf") {
+        fonts.font_data.insert(
+            "segoe_ui_bold".to_owned(),
+            std::sync::Arc::new(egui::FontData::from_owned(data_bold)),
+        );
+        fonts
+            .families
+            .entry(font_family_bold())
+            .or_default()
+            .push("segoe_ui_bold".to_owned());
+    }
+
+    if let Some(prop_fonts) = fonts.families.get(&egui::FontFamily::Proportional).cloned() {
+        let bold_entry = fonts.families.entry(font_family_bold()).or_default();
+        for f in prop_fonts {
+            if !bold_entry.contains(&f) {
+                bold_entry.push(f);
+            }
+        }
+    }
+
+    ctx.set_fonts(fonts);
 }
 
 fn format_dpi(dpi: u16) -> String {
@@ -949,20 +990,7 @@ impl App {
 
         cc.egui_ctx.set_visuals(visuals);
 
-        // Load modern native system font (Segoe UI)
-        let mut fonts = egui::FontDefinitions::default();
-        if let Ok(data) = std::fs::read("C:\\Windows\\Fonts\\segoeui.ttf") {
-            fonts.font_data.insert(
-                "segoe_ui".to_owned(),
-                std::sync::Arc::new(egui::FontData::from_owned(data)),
-            );
-            fonts
-                .families
-                .entry(egui::FontFamily::Proportional)
-                .or_default()
-                .insert(0, "segoe_ui".to_owned());
-            cc.egui_ctx.set_fonts(fonts);
-        }
+        setup_fonts(&cc.egui_ctx);
 
         let (tx_req, rx_req) = channel();
         let (tx_resp, rx_resp) = channel();
@@ -1287,7 +1315,7 @@ impl App {
                                             ui.add_space(6.0);
 
                                             let (dot_rect, _) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), egui::Sense::hover());
-                                            let c = dot_rect.center();
+                                            let c = Pos2::new(dot_rect.center().x, dot_rect.center().y + 1.5);
                                             if has_glow {
                                                 ui.painter().circle_filled(c, 5.5, COLOR_ACCENT_GLOW);
                                             }
@@ -1372,7 +1400,7 @@ impl App {
                                                 };
                                                 let stage_name = format!("Stage {}", i + 1);
                                                 row_ui.painter().text(
-                                                    Pos2::new(stage_rect.min.x + 22.0, stage_rect.center().y),
+                                                    Pos2::new(stage_rect.min.x + 22.0, stage_rect.center().y - 1.5),
                                                     egui::Align2::LEFT_CENTER,
                                                     &stage_name,
                                                     font_control_text(),
@@ -2494,19 +2522,7 @@ mod tests {
     #[test]
     fn test_window_height_min_inner_size_compliance() {
         let ctx = egui::Context::default();
-        let mut fonts = egui::FontDefinitions::default();
-        if let Ok(data) = std::fs::read("C:\\Windows\\Fonts\\segoeui.ttf") {
-            fonts.font_data.insert(
-                "segoe_ui".to_owned(),
-                std::sync::Arc::new(egui::FontData::from_owned(data)),
-            );
-            fonts
-                .families
-                .entry(egui::FontFamily::Proportional)
-                .or_default()
-                .insert(0, "segoe_ui".to_owned());
-            ctx.set_fonts(fonts);
-        }
+        setup_fonts(&ctx);
         for stages in 1..=6 {
             let mut app = create_test_app();
             app.config.dpi_stages_count = stages;
