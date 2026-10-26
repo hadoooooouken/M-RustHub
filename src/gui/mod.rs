@@ -489,19 +489,29 @@ fn apply_button(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
     response
 }
 
-fn restore_button(ui: &mut egui::Ui) -> (egui::Response, bool) {
+fn restore_button(ui: &mut egui::Ui, enabled: bool) -> (egui::Response, bool) {
     let desired_size = Vec2::new(150.0, 38.0);
-    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(
+        desired_size,
+        if enabled { egui::Sense::click() } else { egui::Sense::hover() },
+    );
 
-    let is_shift = ui.input(|i| i.modifiers.shift);
-    let is_highlighted = response.hovered() || response.has_focus();
+    let is_shift = enabled && ui.input(|i| i.modifiers.shift);
+    let is_highlighted = enabled && (response.hovered() || response.has_focus());
     let is_factory = is_highlighted && is_shift;
 
-    if response.hovered() {
+    if response.hovered() && enabled {
         ui.ctx().request_repaint();
     }
 
-    let (fill, stroke, text_color, label) = if is_factory {
+    let (fill, stroke, text_color, label) = if !enabled {
+        (
+            COLOR_BG_ELEMENT,
+            Stroke::new(1.0, COLOR_BORDER_CARD),
+            COLOR_TEXT_DISABLED,
+            "Restore from mouse",
+        )
+    } else if is_factory {
         if response.is_pointer_button_down_on() {
             (
                 Color32::from_rgb(0x45, 0x0A, 0x0A),
@@ -551,7 +561,9 @@ fn restore_button(ui: &mut egui::Ui) -> (egui::Response, bool) {
         text_color,
     );
 
-    let response = if is_factory {
+    let response = if !enabled {
+        response
+    } else if is_factory {
         response.on_hover_text("Reset all settings to factory defaults")
     } else {
         response.on_hover_text("Discard unsaved changes and reload from mouse\n(Hold Shift for Factory reset)")
@@ -584,7 +596,7 @@ enum WorkerResponse {
         is_wireless: bool,
     },
     DpiStageChanged(usize),
-    ApplySuccess,
+    ApplySuccess(MouseConfig),
     ApplyError(String),
     Disconnected(String),
 }
@@ -733,7 +745,7 @@ fn start_worker(
                                     last_known_stage = Some(cfg.active_dpi_stage.clamp(1, norm_count));
                                     consecutive_poll_errors = 0;
                                     mouse = Some(m);
-                                    let _ = tx_resp.send(WorkerResponse::ApplySuccess);
+                                    let _ = tx_resp.send(WorkerResponse::ApplySuccess(cfg));
                                 }
                                 Err(e) => {
                                     drop(m);
@@ -977,6 +989,21 @@ impl App {
         self.status_msg = Some((msg.to_string(), Instant::now()));
     }
 
+    pub(crate) fn is_busy(&self) -> bool {
+        self.status_msg.as_ref().map(|(m, t)| {
+            (m.starts_with("Applying") || m.starts_with("Reloading")) && t.elapsed() < Duration::from_secs(4)
+        }).unwrap_or(false)
+    }
+
+    pub(crate) fn make_factory_config(&self) -> MouseConfig {
+        let mut factory_cfg = MouseConfig::default();
+        factory_cfg.sensor_flags = self.saved_config.sensor_flags;
+        factory_cfg.scroll_flag = self.saved_config.scroll_flag;
+        factory_cfg.highspeed_mode = self.saved_config.highspeed_mode;
+        factory_cfg.sensor_angle = self.saved_config.sensor_angle;
+        factory_cfg
+    }
+
     pub(crate) fn set_dpi_stages_count(&mut self, count: usize) {
         self.config.dpi_stages_count = count;
         if self.config.active_dpi_stage > count {
@@ -1003,7 +1030,7 @@ impl App {
                 self.is_wireless = is_wireless;
                 self.is_connected = true;
                 self.has_unsaved_changes = self.config != self.saved_config;
-                if self.status_msg.as_ref().map_or(true, |(m, _)| !m.starts_with("Applying")) {
+                if self.status_msg.as_ref().map_or(true, |(m, _)| !m.starts_with("Applying") && !m.starts_with("Reloading")) {
                     self.set_status("Connected to MCHOSE mouse");
                 }
                 false
@@ -1039,9 +1066,9 @@ impl App {
                 self.config.active_dpi_stage = new_stage.clamp(1, count);
                 true
             }
-            WorkerResponse::ApplySuccess => {
-                self.saved_config = self.config.clone();
-                self.has_unsaved_changes = false;
+            WorkerResponse::ApplySuccess(saved_cfg) => {
+                self.saved_config = saved_cfg;
+                self.has_unsaved_changes = self.config != self.saved_config;
                 if let Some((ref msg, _)) = self.status_msg {
                     if msg.starts_with("Factory") || msg.contains("factory") {
                         self.set_status("Factory settings restored");
@@ -1635,10 +1662,8 @@ impl App {
                                     // Dynamic check: are there genuine unsaved changes compared to the mouse?
                                     self.has_unsaved_changes = self.config != self.saved_config;
 
-                                    // Check if an apply or factory action is currently in progress
-                                    let is_applying = self.status_msg.as_ref().map(|(m, t)| {
-                                        m.starts_with("Applying") && t.elapsed() < Duration::from_secs(4)
-                                    }).unwrap_or(false);
+                                    // Check if an apply, factory, or reload action is currently in progress
+                                    let is_busy = self.is_busy();
 
                                     // Resolve active status message and color
                                     let active_msg = if let Some((ref msg, time)) = self.status_msg {
@@ -1715,26 +1740,17 @@ impl App {
                                     let space = (ui.available_width() - total_btn_w).max(10.0);
                                     ui.add_space(space);
 
-                                    let (restore_resp, is_factory) = restore_button(ui);
-                                    if restore_resp.clicked() && !is_applying {
+                                    let restore_enabled = !is_busy;
+                                    let (restore_resp, is_factory) = restore_button(ui, restore_enabled);
+                                    if restore_resp.clicked() && restore_enabled {
                                         if is_factory {
+                                            let factory_cfg = self.make_factory_config();
                                             if self.is_connected {
-                                                let mut factory_cfg = MouseConfig::default();
-                                                // Preserve hardware sensor flags / angle if they were configured on this mouse
-                                                if self.saved_config.sensor_flags != 0 {
-                                                    factory_cfg.sensor_flags = self.saved_config.sensor_flags;
-                                                }
-                                                if self.saved_config.highspeed_mode != 0 {
-                                                    factory_cfg.highspeed_mode = self.saved_config.highspeed_mode;
-                                                }
-                                                if self.saved_config.sensor_angle != 0 {
-                                                    factory_cfg.sensor_angle = self.saved_config.sensor_angle;
-                                                }
                                                 let _ = self.tx_req.send(WorkerRequest::ApplyConfig(factory_cfg.clone()));
                                                 self.config = factory_cfg;
                                                 self.set_status("Applying factory defaults...");
                                             } else {
-                                                self.config = MouseConfig::default();
+                                                self.config = factory_cfg;
                                                 self.has_unsaved_changes = self.config != self.saved_config;
                                                 self.set_status("Factory defaults loaded (offline)");
                                             }
@@ -1750,8 +1766,8 @@ impl App {
 
                                     ui.add_space(btn_gap);
 
-                                    let apply_enabled = self.is_connected && self.has_unsaved_changes && !is_applying;
-                                    if apply_button(ui, apply_enabled).clicked() {
+                                    let apply_enabled = self.is_connected && self.has_unsaved_changes && !is_busy;
+                                    if apply_button(ui, apply_enabled).clicked() && apply_enabled {
                                         let _ = self.tx_req.send(WorkerRequest::ApplyConfig(self.config.clone()));
                                         self.set_status("Applying settings...");
                                     }
@@ -1817,6 +1833,7 @@ pub fn run_gui() -> eframe::Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::driver::Lod;
 
     #[test]
     fn test_format_dpi() {
@@ -2384,5 +2401,125 @@ mod tests {
                 app.current_window_h, stages
             );
         }
+    }
+
+    #[test]
+    fn test_is_busy_blocking_reloading_and_applying() {
+        let mut app = create_test_app();
+        assert!(!app.is_busy());
+
+        // Reloading settings
+        app.set_status("Reloading settings...");
+        assert!(app.is_busy(), "Must be busy while reloading settings from mouse");
+
+        // Applying settings
+        app.set_status("Applying settings...");
+        assert!(app.is_busy(), "Must be busy while applying settings");
+
+        // Applying factory defaults
+        app.set_status("Applying factory defaults...");
+        assert!(app.is_busy(), "Must be busy while applying factory defaults");
+
+        // Settings reloaded / applied / error / disconnected -> not busy
+        app.set_status("Settings reloaded");
+        assert!(!app.is_busy());
+
+        app.set_status("Settings applied");
+        assert!(!app.is_busy());
+
+        app.set_status("Save error: HID timeout");
+        assert!(!app.is_busy());
+
+        app.set_status("Disconnected: Mouse offline");
+        assert!(!app.is_busy());
+
+        // Safety timeout (> 4s)
+        app.status_msg = Some(("Reloading settings...".to_string(), Instant::now() - Duration::from_secs(5)));
+        assert!(!app.is_busy(), "Must timeout after 4 seconds of inactivity");
+    }
+
+    #[test]
+    fn test_apply_success_preserves_concurrent_slider_movement() {
+        let mut app = create_test_app();
+        let mut sent_cfg = app.config.clone();
+        sent_cfg.debounce_ms = 4;
+
+        // User immediately changes debounce to 12 while worker is busy applying 4
+        app.config.debounce_ms = 12;
+        app.has_unsaved_changes = true;
+
+        // Worker reports success with sent_cfg
+        app.on_worker_response(WorkerResponse::ApplySuccess(sent_cfg.clone()));
+
+        // saved_config must record what was actually written to mouse (4), NOT current config (12)
+        assert_eq!(app.saved_config.debounce_ms, 4);
+        assert_eq!(app.config.debounce_ms, 12);
+        // has_unsaved_changes must remain true so user can apply the new value (12)
+        assert!(app.has_unsaved_changes);
+    }
+
+    #[test]
+    fn test_apply_success_syncs_when_no_concurrent_movement() {
+        let mut app = create_test_app();
+        let mut sent_cfg = app.config.clone();
+        sent_cfg.debounce_ms = 4;
+        app.config = sent_cfg.clone();
+        app.has_unsaved_changes = true;
+
+        app.on_worker_response(WorkerResponse::ApplySuccess(sent_cfg.clone()));
+
+        assert_eq!(app.saved_config.debounce_ms, 4);
+        assert_eq!(app.config.debounce_ms, 4);
+        assert!(!app.has_unsaved_changes);
+    }
+
+    #[test]
+    fn test_make_factory_config_preserves_all_hardware_fields() {
+        let mut app = create_test_app();
+        // Hardware fields read from mouse:
+        app.saved_config.sensor_flags = 0x81;
+        app.saved_config.scroll_flag = 0x02;
+        app.saved_config.highspeed_mode = 0x03;
+        app.saved_config.sensor_angle = -5;
+
+        // User configurable settings altered by user:
+        app.saved_config.debounce_ms = 18;
+        app.saved_config.report_rate = PollingRate::Hz1000;
+        app.saved_config.sleep_minutes = 20;
+
+        let factory_cfg = app.make_factory_config();
+
+        // Hardware fields must be preserved:
+        assert_eq!(factory_cfg.sensor_flags, 0x81);
+        assert_eq!(factory_cfg.scroll_flag, 0x02);
+        assert_eq!(factory_cfg.highspeed_mode, 0x03);
+        assert_eq!(factory_cfg.sensor_angle, -5);
+
+        // User settings must be reset to defaults:
+        assert_eq!(factory_cfg.debounce_ms, 8);
+        assert_eq!(factory_cfg.report_rate, PollingRate::Hz250);
+        assert_eq!(factory_cfg.sleep_minutes, 3);
+        assert_eq!(factory_cfg.lod, Lod::High2mm);
+    }
+
+    #[test]
+    fn test_offline_factory_reset_preserves_all_hardware_fields() {
+        let mut app = create_test_app();
+        app.is_connected = false;
+        app.saved_config.sensor_flags = 0x81;
+        app.saved_config.scroll_flag = 0x02;
+        app.saved_config.highspeed_mode = 0x03;
+        app.saved_config.sensor_angle = -5;
+
+        // Factory reset performed while offline
+        let factory_cfg = app.make_factory_config();
+        app.config = factory_cfg;
+        app.has_unsaved_changes = app.config != app.saved_config;
+
+        assert_eq!(app.config.sensor_flags, 0x81);
+        assert_eq!(app.config.scroll_flag, 0x02);
+        assert_eq!(app.config.highspeed_mode, 0x03);
+        assert_eq!(app.config.sensor_angle, -5);
+        assert_eq!(app.config.debounce_ms, 8);
     }
 }
