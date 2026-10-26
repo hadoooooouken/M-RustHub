@@ -1021,9 +1021,15 @@ impl App {
     }
 
     pub(crate) fn set_dpi_stages_count(&mut self, count: usize) {
+        let prev_count = self.config.dpi_stages_count;
         self.config.dpi_stages_count = count;
         if self.config.active_dpi_stage > count {
             self.config.active_dpi_stage = count;
+        } else if count > prev_count
+            && self.config.active_dpi_stage == prev_count
+            && self.saved_config.active_dpi_stage > prev_count
+        {
+            self.config.active_dpi_stage = self.saved_config.active_dpi_stage.min(count);
         }
     }
 
@@ -2436,6 +2442,34 @@ mod tests {
         app.set_dpi_stages_count(2);
         assert_eq!(app.config.dpi_stages_count, 2);
         assert_eq!(app.config.active_dpi_stage, 2, "Active stage clamped to count");
+    }
+
+    #[test]
+    fn test_set_dpi_stages_count_restores_active_stage_when_unclamped_towards_saved_stage() {
+        let mut app = create_test_app();
+        app.saved_config.dpi_stages_count = 6;
+        app.saved_config.active_dpi_stage = 4;
+        app.config.dpi_stages_count = 6;
+        app.config.active_dpi_stage = 4;
+
+        // User temporarily reduces stage count in GUI to 2 (clamping active stage to 2)
+        app.set_dpi_stages_count(2);
+        assert_eq!(app.config.dpi_stages_count, 2);
+        assert_eq!(app.config.active_dpi_stage, 2);
+
+        // User increases back to 6: active stage restores to saved 4
+        app.set_dpi_stages_count(6);
+        assert_eq!(app.config.dpi_stages_count, 6);
+        assert_eq!(app.config.active_dpi_stage, 4);
+
+        // If user clamps to 2 and then increases to 3: active stage restores up to min(4, 3) = 3
+        app.set_dpi_stages_count(2);
+        assert_eq!(app.config.active_dpi_stage, 2);
+        app.set_dpi_stages_count(3);
+        assert_eq!(app.config.active_dpi_stage, 3);
+        // And then from 3 to 5 restores to min(4, 5) = 4
+        app.set_dpi_stages_count(5);
+        assert_eq!(app.config.active_dpi_stage, 4);
     }
 
     #[test]
