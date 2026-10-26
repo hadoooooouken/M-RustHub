@@ -1,4 +1,4 @@
-# M-RustHub 🦀🖱️
+# M-RustHub 🖱️
 
 Native, lightweight Rust configuration utility for **MCHOSE G3 V2**.
 
