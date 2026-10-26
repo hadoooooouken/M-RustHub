@@ -13,7 +13,7 @@ Zero Electron. Zero Chinese cloud telemetry. 100% offline and instant.
 ---
 
 <p align="center">
-  <img src="screenshots/mrusthub-mainwindow.webp" alt="M-RustHub GUI" width="620" />
+  <img src="screenshots/mrusthub-mainwindow.webp" alt="M-RustHub GUI" />
 </p>
 
 ---
