@@ -30,28 +30,34 @@ fn attach_parent_console() {
         const STD_ERROR_HANDLE: u32 = 0xFFFF_FFF4;  // ((DWORD)-12)
 
         let stdout_handle = GetStdHandle(STD_OUTPUT_HANDLE);
-        if stdout_handle == 0 || stdout_handle == -1 {
-            if AttachConsole(ATTACH_PARENT_PROCESS) != 0 {
-                const GENERIC_READ: u32 = 0x8000_0000;
-                const GENERIC_WRITE: u32 = 0x4000_0000;
-                const FILE_SHARE_READ: u32 = 1;
-                const FILE_SHARE_WRITE: u32 = 2;
-                const OPEN_EXISTING: u32 = 3;
+        let stderr_handle = GetStdHandle(STD_ERROR_HANDLE);
+        let need_stdout = stdout_handle == 0 || stdout_handle == -1;
+        let need_stderr = stderr_handle == 0 || stderr_handle == -1;
 
-                let conout_name: [u16; 8] = [
-                    'C' as u16, 'O' as u16, 'N' as u16, 'O' as u16, 'U' as u16, 'T' as u16, '$' as u16, 0,
-                ];
-                let handle = CreateFileW(
-                    conout_name.as_ptr(),
-                    GENERIC_READ | GENERIC_WRITE,
-                    FILE_SHARE_READ | FILE_SHARE_WRITE,
-                    0,
-                    OPEN_EXISTING,
-                    0,
-                    0,
-                );
-                if handle != -1 {
+        if (need_stdout || need_stderr) && AttachConsole(ATTACH_PARENT_PROCESS) != 0 {
+            const GENERIC_READ: u32 = 0x8000_0000;
+            const GENERIC_WRITE: u32 = 0x4000_0000;
+            const FILE_SHARE_READ: u32 = 1;
+            const FILE_SHARE_WRITE: u32 = 2;
+            const OPEN_EXISTING: u32 = 3;
+
+            let conout_name: [u16; 8] = [
+                'C' as u16, 'O' as u16, 'N' as u16, 'O' as u16, 'U' as u16, 'T' as u16, '$' as u16, 0,
+            ];
+            let handle = CreateFileW(
+                conout_name.as_ptr(),
+                GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                0,
+                OPEN_EXISTING,
+                0,
+                0,
+            );
+            if handle != -1 {
+                if need_stdout {
                     SetStdHandle(STD_OUTPUT_HANDLE, handle);
+                }
+                if need_stderr {
                     SetStdHandle(STD_ERROR_HANDLE, handle);
                 }
             }
@@ -202,7 +208,9 @@ fn handle_cli(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
 
 fn main() {
     #[cfg(windows)]
-    attach_parent_console();
+    if std::env::args_os().len() > 1 {
+        attach_parent_console();
+    }
 
     let args = Cli::parse();
 
