@@ -49,6 +49,7 @@ Features available in GUI:
 - **Button Debounce Time**: 0 ms – 20 ms (anti-doubleclick tuning)
 - **Wireless Sleep Timeout**: 0 min – 100 min (0 = Never sleep)
 - **Instant Save to Flash** (Hardware memory)
+- **Factory Reset**: Hold <kbd>Shift</kbd> while hovering over the **Restore from mouse** button to reveal **Factory reset**
 
 ---
 
