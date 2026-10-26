@@ -450,11 +450,23 @@ impl MchoseMouse {
             return Err(DriverError::Protocol("Mouse is offline or sleeping".to_string()));
         }
         let pkt = Self::build_config_packet(cfg);
-        self.write_packet(&pkt)?;
-        // Read ACK packet [170, 15, ...] from mouse to avoid leaving it in the OS HID queue
-        let _ = self.read_response(15, 150);
-        std::thread::sleep(std::time::Duration::from_millis(30));
-        Ok(())
+
+        for attempt in 0..3 {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(40));
+            }
+            if self.write_packet(&pkt).is_err() {
+                continue;
+            }
+            if self.read_response(15, 150).is_ok() {
+                std::thread::sleep(std::time::Duration::from_millis(30));
+                return Ok(());
+            }
+        }
+
+        Err(DriverError::Protocol(
+            "Failed to receive ACK after writing configuration".to_string(),
+        ))
     }
 
     /// Quick helper: set active DPI stage (1..=6)
