@@ -1289,53 +1289,57 @@ impl eframe::App for App {
                                                 .inner_margin(egui::Margin::symmetric(10, 6))
                                         };
 
+                                        let mut stage_clicked = false;
+                                        let mut dpi_clicked = false;
+                                        let mut slider_rect = Rect::NOTHING;
+                                        let mut btn_minus_rect = Rect::NOTHING;
+                                        let mut btn_plus_rect = Rect::NOTHING;
+
                                         let row_resp = row_frame.show(ui, |row_ui| {
                                             row_ui.horizontal(|row_ui| {
                                                 row_ui.spacing_mut().item_spacing = Vec2::ZERO;
 
-                                                // 1. Stage Dot (aligned to 28px height, matching slider track centerline)
-                                                let (dot_rect, _) = row_ui.allocate_exact_size(Vec2::new(14.0, 28.0), egui::Sense::hover());
-                                                let dot_center = dot_rect.center();
+                                                // 1 & 2. Stage Dot & Name (Unified clickable badge: 84px)
+                                                let (stage_rect, stage_resp) = row_ui.allocate_exact_size(Vec2::new(84.0, 28.0), egui::Sense::click());
+                                                let stage_resp = stage_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+                                                let dot_center = Pos2::new(stage_rect.min.x + 7.0, stage_rect.center().y);
                                                 row_ui.painter().circle_filled(dot_center, 4.8, color);
                                                 if is_active {
                                                     row_ui.painter().circle_stroke(dot_center, 7.2, Stroke::new(1.2, color));
                                                 }
 
-                                                row_ui.add_space(8.0);
-
-                                                // 2. Stage Name (Clickable)
                                                 let label_color = if is_active {
                                                     COLOR_TEXT_PRIMARY
                                                 } else {
                                                     COLOR_TEXT_SECONDARY
                                                 };
                                                 let stage_name = format!("Stage {}", i + 1);
-                                                let (lbl_rect, lbl_resp) = row_ui.allocate_exact_size(Vec2::new(62.0, 28.0), egui::Sense::click());
-                                                if lbl_resp.clicked() && !is_active {
-                                                    self.config.active_dpi_stage = i + 1;
-                                                    self.has_unsaved_changes = true;
-                                                }
                                                 row_ui.painter().text(
-                                                    lbl_rect.left_center(),
+                                                    Pos2::new(stage_rect.min.x + 22.0, stage_rect.center().y),
                                                     egui::Align2::LEFT_CENTER,
                                                     &stage_name,
                                                     font_control_text(),
                                                     label_color,
                                                 );
+                                                if stage_resp.clicked() {
+                                                    stage_clicked = true;
+                                                }
 
                                                 row_ui.add_space(10.0);
 
                                                 // 3. Slider (takes remaining space)
                                                 let right_reserved = 80.0 + 8.0 + 44.0 + 4.0 + 44.0;
                                                 let slider_w = (row_ui.available_width() - right_reserved - 10.0).max(60.0);
+                                                slider_rect = Rect::from_min_size(row_ui.cursor().min, Vec2::new(slider_w, 28.0));
                                                 if custom_slider_u16(row_ui, &mut self.config.dpi_stages[i], MIN_DPI, MAX_DPI, DPI_STEP, slider_w) {
                                                     self.has_unsaved_changes = true;
                                                 }
 
                                                 row_ui.add_space(10.0);
 
-                                                // 4. DPI readout
-                                                let (dpi_rect, _) = row_ui.allocate_exact_size(Vec2::new(80.0, 28.0), egui::Sense::hover());
+                                                // 4. DPI readout (Clickable: 80px)
+                                                let (dpi_rect, dpi_resp) = row_ui.allocate_exact_size(Vec2::new(80.0, 28.0), egui::Sense::click());
+                                                let dpi_resp = dpi_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
                                                 let full_str = format!("{} DPI", format_dpi(self.config.dpi_stages[i]));
                                                 row_ui.painter().text(
                                                     dpi_rect.right_center(),
@@ -1344,11 +1348,16 @@ impl eframe::App for App {
                                                     font_dpi_value(),
                                                     COLOR_TEXT_PRIMARY,
                                                 );
+                                                if dpi_resp.clicked() {
+                                                    dpi_clicked = true;
+                                                }
 
                                                 row_ui.add_space(8.0);
 
                                                 // 5. [-100] button
-                                                if step_button(row_ui, "-100").clicked() {
+                                                let btn_minus_resp = step_button(row_ui, "-100");
+                                                btn_minus_rect = btn_minus_resp.rect;
+                                                if btn_minus_resp.clicked() {
                                                     let cur = self.config.dpi_stages[i];
                                                     let next = step_dpi_down(cur);
                                                     if next != cur {
@@ -1360,7 +1369,9 @@ impl eframe::App for App {
                                                 row_ui.add_space(4.0);
 
                                                 // 6. [+100] button
-                                                if step_button(row_ui, "+100").clicked() {
+                                                let btn_plus_resp = step_button(row_ui, "+100");
+                                                btn_plus_rect = btn_plus_resp.rect;
+                                                if btn_plus_resp.clicked() {
                                                     let cur = self.config.dpi_stages[i];
                                                     let next = step_dpi_up(cur);
                                                     if next != cur {
@@ -1371,9 +1382,33 @@ impl eframe::App for App {
                                             });
                                         }).response;
 
-                                        if row_resp.clicked() && !is_active {
+                                        // Row background click (excluding interactive controls like slider and step buttons)
+                                        let clicked_bg = ui.input(|inp| {
+                                            inp.pointer.button_clicked(egui::PointerButton::Primary)
+                                                && inp.pointer.interact_pos().is_some_and(|pos| {
+                                                    row_resp.rect.contains(pos)
+                                                        && !slider_rect.contains(pos)
+                                                        && !btn_minus_rect.contains(pos)
+                                                        && !btn_plus_rect.contains(pos)
+                                                })
+                                        });
+
+                                        if (stage_clicked || dpi_clicked || clicked_bg) && !is_active {
                                             self.config.active_dpi_stage = i + 1;
                                             self.has_unsaved_changes = true;
+                                        }
+
+                                        // Visual cursor feedback when hovering over selectable areas of inactive row
+                                        if !is_active {
+                                            if let Some(pos) = ui.input(|inp| inp.pointer.hover_pos()) {
+                                                if row_resp.rect.contains(pos)
+                                                    && !slider_rect.contains(pos)
+                                                    && !btn_minus_rect.contains(pos)
+                                                    && !btn_plus_rect.contains(pos)
+                                                {
+                                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                                }
+                                            }
                                         }
 
                                         ui.add_space(3.0);
@@ -2034,5 +2069,209 @@ mod tests {
         assert_eq!(app.config.debounce_ms, 15);
         assert_ne!(app.config.debounce_ms, app.saved_config.debounce_ms);
         assert!(app.status_msg.as_ref().unwrap().0.contains("Save error: Mouse is offline or sleeping"));
+    }
+
+    #[test]
+    fn test_row_interact_with_buttons() {
+        let ctx = egui::Context::default();
+        let mut row_activated = false;
+        let mut btn_minus_clicked = false;
+        let mut btn_plus_clicked = false;
+        let mut slider_changed = false;
+
+        let mut val = 800u16;
+
+        // Helper closure to run UI frame
+        let run_frame = |ctx: &egui::Context, raw_input: egui::RawInput,
+                         _val: &mut u16,
+                         row_activated: &mut bool,
+                         btn_minus_clicked: &mut bool,
+                         btn_plus_clicked: &mut bool,
+                         slider_changed: &mut bool| -> (egui::Rect, egui::Rect, egui::Rect, egui::Rect, egui::Rect) {
+            let mut dot_rect_out = egui::Rect::NOTHING;
+            let mut dpi_rect_out = egui::Rect::NOTHING;
+            let mut slider_rect_out = egui::Rect::NOTHING;
+            let mut minus_rect_out = egui::Rect::NOTHING;
+            let mut plus_rect_out = egui::Rect::NOTHING;
+
+            let mut out = ctx.run_ui(raw_input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let is_active = false;
+                    let row_frame = egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 6));
+
+                    let mut minus_resp = None;
+                    let mut plus_resp = None;
+                    let mut slider_rect = egui::Rect::NOTHING;
+                    let mut minus_rect = egui::Rect::NOTHING;
+                    let mut plus_rect = egui::Rect::NOTHING;
+                    let mut stage_resp = None;
+                    let mut dpi_resp = None;
+
+                    let row_resp = row_frame.show(ui, |row_ui| {
+                        row_ui.horizontal(|row_ui| {
+                            // Stage badge (dot + label)
+                            let (s_rect, s_resp) = row_ui.allocate_exact_size(egui::vec2(84.0, 28.0), egui::Sense::click());
+                            dot_rect_out = s_rect;
+                            stage_resp = Some(s_resp);
+
+                            row_ui.add_space(10.0);
+
+                            // Slider
+                            let slider_w = 100.0;
+                            let (s_slider_rect, s_slider_resp) = row_ui.allocate_exact_size(egui::vec2(slider_w, 28.0), egui::Sense::click_and_drag());
+                            slider_rect = s_slider_rect;
+                            slider_rect_out = s_slider_rect;
+                            if s_slider_resp.clicked() || s_slider_resp.dragged() {
+                                *slider_changed = true;
+                            }
+
+                            row_ui.add_space(10.0);
+
+                            // DPI readout
+                            let (d_rect, d_resp) = row_ui.allocate_exact_size(egui::vec2(80.0, 28.0), egui::Sense::click());
+                            dpi_rect_out = d_rect;
+                            dpi_resp = Some(d_resp);
+
+                            row_ui.add_space(8.0);
+
+                            // Minus button
+                            let m_resp = step_button(row_ui, "-100");
+                            minus_rect = m_resp.rect;
+                            minus_rect_out = m_resp.rect;
+                            minus_resp = Some(m_resp);
+
+                            row_ui.add_space(4.0);
+
+                            // Plus button
+                            let p_resp = step_button(row_ui, "+100");
+                            plus_rect = p_resp.rect;
+                            plus_rect_out = p_resp.rect;
+                            plus_resp = Some(p_resp);
+                        });
+                    }).response;
+
+                    if let Some(r) = minus_resp {
+                        if r.clicked() {
+                            *btn_minus_clicked = true;
+                        }
+                    }
+                    if let Some(r) = plus_resp {
+                        if r.clicked() {
+                            *btn_plus_clicked = true;
+                        }
+                    }
+
+                    // Row activation: click on stage badge, DPI readout, or row background (excluding slider & buttons)
+                    let clicked_stage = stage_resp.as_ref().is_some_and(|r| r.clicked());
+                    let clicked_dpi = dpi_resp.as_ref().is_some_and(|r| r.clicked());
+                    let clicked_bg = ui.input(|i| {
+                        i.pointer.button_clicked(egui::PointerButton::Primary) && i.pointer.interact_pos().is_some_and(|pos| {
+                            row_resp.rect.contains(pos)
+                                && !slider_rect.contains(pos)
+                                && !minus_rect.contains(pos)
+                                && !plus_rect.contains(pos)
+                        })
+                    });
+
+                    if (clicked_stage || clicked_dpi || clicked_bg) && !is_active {
+                        *row_activated = true;
+                    }
+
+                    if !is_active {
+                        if let Some(pos) = ui.input(|inp| inp.pointer.hover_pos()) {
+                            if row_resp.rect.contains(pos)
+                                && !slider_rect.contains(pos)
+                                && !minus_rect.contains(pos)
+                                && !plus_rect.contains(pos)
+                            {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
+                        }
+                    }
+                });
+            });
+            out.textures_delta.clear();
+
+            (dot_rect_out, dpi_rect_out, slider_rect_out, minus_rect_out, plus_rect_out)
+        };
+
+        // 1. Get initial rects
+        let mut r1 = egui::RawInput::default();
+        r1.time = Some(0.0);
+        r1.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)));
+        let (dot_rect, dpi_rect, _slider_rect, minus_rect, _plus_rect) = run_frame(
+            &ctx, r1, &mut val, &mut row_activated, &mut btn_minus_clicked, &mut btn_plus_clicked, &mut slider_changed,
+        );
+
+        // 2. Click minus button
+        let minus_center = minus_rect.center();
+        let mut r2 = egui::RawInput::default();
+        r2.time = Some(0.05);
+        r2.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)));
+        r2.events.push(egui::Event::PointerMoved(minus_center));
+        r2.events.push(egui::Event::PointerButton { pos: minus_center, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::default() });
+        run_frame(&ctx, r2, &mut val, &mut row_activated, &mut btn_minus_clicked, &mut btn_plus_clicked, &mut slider_changed);
+
+        let mut r3 = egui::RawInput::default();
+        r3.time = Some(0.10);
+        r3.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)));
+        r3.events.push(egui::Event::PointerButton { pos: minus_center, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::default() });
+        run_frame(&ctx, r3, &mut val, &mut row_activated, &mut btn_minus_clicked, &mut btn_plus_clicked, &mut slider_changed);
+
+        assert!(btn_minus_clicked, "Minus button must be clicked");
+        assert!(!row_activated, "Row must not be activated when clicking minus button");
+
+        // 3. Click dot
+        let dot_center = dot_rect.center();
+        let mut r4 = egui::RawInput::default();
+        r4.time = Some(0.15);
+        r4.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)));
+        r4.events.push(egui::Event::PointerMoved(dot_center));
+        r4.events.push(egui::Event::PointerButton { pos: dot_center, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::default() });
+        run_frame(&ctx, r4, &mut val, &mut row_activated, &mut btn_minus_clicked, &mut btn_plus_clicked, &mut slider_changed);
+
+        let mut r5 = egui::RawInput::default();
+        r5.time = Some(0.20);
+        r5.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)));
+        r5.events.push(egui::Event::PointerButton { pos: dot_center, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::default() });
+        run_frame(&ctx, r5, &mut val, &mut row_activated, &mut btn_minus_clicked, &mut btn_plus_clicked, &mut slider_changed);
+
+        assert!(row_activated, "Row must be activated when clicking dot");
+        row_activated = false;
+
+        // 4. Click DPI readout
+        let dpi_center = dpi_rect.center();
+        let mut r6 = egui::RawInput::default();
+        r6.time = Some(0.25);
+        r6.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)));
+        r6.events.push(egui::Event::PointerMoved(dpi_center));
+        r6.events.push(egui::Event::PointerButton { pos: dpi_center, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::default() });
+        run_frame(&ctx, r6, &mut val, &mut row_activated, &mut btn_minus_clicked, &mut btn_plus_clicked, &mut slider_changed);
+
+        let mut r7 = egui::RawInput::default();
+        r7.time = Some(0.30);
+        r7.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)));
+        r7.events.push(egui::Event::PointerButton { pos: dpi_center, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::default() });
+        run_frame(&ctx, r7, &mut val, &mut row_activated, &mut btn_minus_clicked, &mut btn_plus_clicked, &mut slider_changed);
+
+        assert!(row_activated, "Row must be activated when clicking DPI readout");
+        row_activated = false;
+
+        // 5. Click background (e.g. top margin above dot)
+        let bg_pos = egui::pos2(dot_rect.center().x, dot_rect.min.y - 3.0);
+        let mut r8 = egui::RawInput::default();
+        r8.time = Some(0.35);
+        r8.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)));
+        r8.events.push(egui::Event::PointerMoved(bg_pos));
+        r8.events.push(egui::Event::PointerButton { pos: bg_pos, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::default() });
+        run_frame(&ctx, r8, &mut val, &mut row_activated, &mut btn_minus_clicked, &mut btn_plus_clicked, &mut slider_changed);
+
+        let mut r9 = egui::RawInput::default();
+        r9.time = Some(0.40);
+        r9.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)));
+        r9.events.push(egui::Event::PointerButton { pos: bg_pos, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::default() });
+        run_frame(&ctx, r9, &mut val, &mut row_activated, &mut btn_minus_clicked, &mut btn_plus_clicked, &mut slider_changed);
+
+        assert!(row_activated, "Row must be activated when clicking row background");
     }
 }
