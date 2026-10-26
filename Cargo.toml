@@ -4,7 +4,7 @@ version = "1.0.0"
 edition = "2024"
 authors = ["hadouken"]
 license = "MIT"
-description = "Native lightweight configuration utility for MCHOSE G3 V2 mouse"
+description = "Lightweight open-source alternative to official MCHOSE HUB driver for MCHOSE G3 V2 mouse"
 repository = "https://github.com/hadoooooouken/M-RustHub"
 
 [dependencies]

@@ -1,6 +1,6 @@
 # M-RustHub 🖱️
 
-Native, lightweight Rust configuration utility for **MCHOSE G3 V2**.
+**A lightweight, open-source native alternative to the official MCHOSE HUB (M-HUB) software & driver for MCHOSE G3 V2.**
 
 Zero Electron. Zero Chinese cloud telemetry. 100% offline and instant.
 
@@ -13,14 +13,16 @@ Zero Electron. Zero Chinese cloud telemetry. 100% offline and instant.
 ---
 
 <p align="center">
-  <img src="screenshots/mrusthub-mainwindow.webp" alt="M-RustHub GUI" />
+  <img src="screenshots/mrusthub-mainwindow.webp" alt="M-RustHub - Lightweight MCHOSE HUB alternative driver GUI for MCHOSE G3 V2" />
 </p>
 
 ---
 
-## ⚡ Comparison with Official M HUB Client
+## ⚡ Open-Source Alternative to MCHOSE HUB
 
-| Feature | Official M HUB Client | M-RustHub (This App) |
+M-RustHub was built as a fast, privacy-focused replacement for the official **MCHOSE HUB** (M-HUB) mouse software and web driver.
+
+| Feature | Official MCHOSE HUB Client | M-RustHub (This App) |
 | :--- | :--- | :--- |
 | **Technology** | Electron + WebView (Next.js) | Native Rust (`eframe` / `egui` + `hidapi`) |
 | **Binary Size** | ~250 MB | **~6.5 MB** |
