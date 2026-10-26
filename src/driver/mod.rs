@@ -105,7 +105,9 @@ pub struct BatteryStatus {
 #[derive(Debug, Clone)]
 pub struct DeviceInfo {
     pub product_name: String,
+    #[allow(dead_code)]
     pub firmware: String,
+    #[allow(dead_code)]
     pub build_date: String,
     pub is_wireless: bool,
     pub vid: u16,
@@ -203,7 +205,7 @@ impl MchoseMouse {
 
         let device = d_info.open_device(&api)?;
 
-        let mut mouse = Self {
+        Ok(Self {
             device,
             info: DeviceInfo {
                 product_name,
@@ -213,15 +215,7 @@ impl MchoseMouse {
                 vid,
                 pid,
             },
-        };
-
-        // Query version info to fill in firmware string
-        if let Ok((fw, date)) = mouse.query_version() {
-            mouse.info.firmware = fw;
-            mouse.info.build_date = date;
-        }
-
-        Ok(mouse)
+        })
     }
 
     /// Discards any stale unread packets from the OS HID input buffer

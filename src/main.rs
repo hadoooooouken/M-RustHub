@@ -84,16 +84,23 @@ fn handle_cli(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
 
     match cmd {
         Commands::Status => {
+            let online = mouse.get_online_status().unwrap_or(false);
+            let (fw, build_date) = if online {
+                mouse
+                    .query_version()
+                    .unwrap_or_else(|_| ("Unknown".into(), "Unknown".into()))
+            } else {
+                ("Unavailable (sleeping)".into(), "Unavailable (sleeping)".into())
+            };
+
             println!("==================================================");
             println!("  M-RUSTHUB - MCHOSE MOUSE TELEMETRY");
             println!("==================================================");
             println!("Device:        {}", mouse.info.product_name);
             println!("Connection:    {}", if mouse.info.is_wireless { "2.4G Wireless (Dongle)" } else { "USB Wired" });
-            println!("Firmware:      {}", mouse.info.firmware);
-            println!("Build Date:    {}", mouse.info.build_date);
+            println!("Firmware:      {}", fw);
+            println!("Build Date:    {}", build_date);
             println!("Hardware ID:   0x{:04X}:0x{:04X}", mouse.info.vid, mouse.info.pid);
-
-            let online = mouse.get_online_status().unwrap_or(false);
             println!("Link Status:   {}", if online { "Online (Ready)" } else { "Sleeping / Standby" });
 
             if !online {
