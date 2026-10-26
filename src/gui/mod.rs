@@ -589,34 +589,58 @@ enum WorkerResponse {
     Disconnected(String),
 }
 
-fn start_worker(
-    tx_resp: Sender<WorkerResponse>,
-    rx_req: Receiver<WorkerRequest>,
-) {
-    std::thread::spawn(move || {
-        let mut mouse: Option<MchoseMouse> = None;
-        let now = Instant::now();
-        let ten_secs = Duration::from_secs(10);
-        let mut last_battery_poll = now.checked_sub(ten_secs).unwrap_or(now);
-        let mut last_stage_poll = now.checked_sub(ten_secs).unwrap_or(now);
-        let mut last_reconnect_poll = now.checked_sub(ten_secs).unwrap_or(now);
-        let mut last_known_stage: Option<usize> = None;
-        let mut consecutive_poll_errors: u32 = 0;
+pub struct AppInitState {
+    pub mouse: Option<MchoseMouse>,
+    pub config: MouseConfig,
+    pub battery: Option<BatteryStatus>,
+    pub is_wireless: bool,
+    pub is_connected: bool,
+}
 
-        // Initial connect attempt
+impl AppInitState {
+    pub fn detect() -> Self {
         if let Ok(m) = MchoseMouse::open() {
             if let Ok(cfg) = m.get_config() {
                 let bat = m.get_battery().ok();
                 let is_wireless = m.info.is_wireless;
-                last_known_stage = Some(cfg.active_dpi_stage);
-                mouse = Some(m);
-                let _ = tx_resp.send(WorkerResponse::Connected {
+                return Self {
+                    mouse: Some(m),
                     config: cfg,
                     battery: bat,
                     is_wireless,
-                });
+                    is_connected: true,
+                };
             }
         }
+        Self {
+            mouse: None,
+            config: MouseConfig::default(),
+            battery: None,
+            is_wireless: true,
+            is_connected: false,
+        }
+    }
+}
+
+fn start_worker(
+    tx_resp: Sender<WorkerResponse>,
+    rx_req: Receiver<WorkerRequest>,
+    initial_mouse: Option<MchoseMouse>,
+    initial_stage: Option<usize>,
+) {
+    std::thread::spawn(move || {
+        let mut mouse = initial_mouse;
+        let now = Instant::now();
+        let ten_secs = Duration::from_secs(10);
+        let mut last_battery_poll = now;
+        let mut last_stage_poll = now;
+        let mut last_reconnect_poll = if mouse.is_none() {
+            now.checked_sub(ten_secs).unwrap_or(now)
+        } else {
+            now
+        };
+        let mut last_known_stage: Option<usize> = initial_stage;
+        let mut consecutive_poll_errors: u32 = 0;
 
         loop {
             let req = rx_req.recv_timeout(Duration::from_millis(200));
@@ -818,7 +842,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, init: AppInitState) -> Self {
         let mut visuals = egui::Visuals::dark();
         visuals.panel_fill = COLOR_BG_MAIN;
         visuals.window_fill = COLOR_BG_MAIN;
@@ -866,36 +890,31 @@ impl App {
 
         let (tx_req, rx_req) = channel();
         let (tx_resp, rx_resp) = channel();
-        start_worker(tx_resp, rx_req);
 
-        let mut config = MouseConfig::default();
-        let mut battery = None;
-        let mut is_wireless = true;
-        let mut is_connected = false;
+        let initial_stage = if init.is_connected {
+            Some(init.config.active_dpi_stage)
+        } else {
+            None
+        };
+        start_worker(tx_resp, rx_req, init.mouse, initial_stage);
 
-        // Synchronously read initial hardware state (takes ~13ms) so the window
-        // opens instantly with the mouse's actual saved configuration without any 1->5 jump!
-        if let Ok(m) = MchoseMouse::open() {
-            if let Ok(cfg) = m.get_config() {
-                battery = m.get_battery().ok();
-                is_wireless = m.info.is_wireless;
-                is_connected = true;
-                config = cfg;
-            }
-        }
-
-        let saved_config = config.clone();
+        let saved_config = init.config.clone();
+        let status_msg = if init.is_connected {
+            Some(("Connected to MCHOSE mouse".to_string(), Instant::now()))
+        } else {
+            None
+        };
 
         Self {
             tx_req,
             rx_resp,
-            config,
+            config: init.config,
             saved_config,
-            battery,
-            is_wireless,
-            is_connected,
+            battery: init.battery,
+            is_wireless: init.is_wireless,
+            is_connected: init.is_connected,
             has_unsaved_changes: false,
-            status_msg: None,
+            status_msg,
             current_window_h: 0.0,
         }
     }
@@ -1668,8 +1687,9 @@ impl eframe::App for App {
 }
 
 pub fn run_gui() -> eframe::Result {
-    let initial_stages = if let Ok(m) = MchoseMouse::open() {
-        m.get_config().map(|c| c.dpi_stages_count).unwrap_or(1)
+    let init_state = AppInitState::detect();
+    let initial_stages = if init_state.is_connected {
+        init_state.config.dpi_stages_count
     } else {
         1
     };
@@ -1695,7 +1715,7 @@ pub fn run_gui() -> eframe::Result {
     eframe::run_native(
         "M-RustHub",
         native_options,
-        Box::new(|cc| Ok(Box::new(App::new(cc)))),
+        Box::new(move |cc| Ok(Box::new(App::new(cc, init_state)))),
     )
 }
 
@@ -1938,5 +1958,20 @@ mod tests {
 
         assert_eq!(app.config.active_dpi_stage, 2, "User's UI-selected stage must be preserved");
         assert_eq!(app.saved_config.active_dpi_stage, 4);
+    }
+
+    #[test]
+    fn test_app_init_state_disconnected_defaults() {
+        let init = AppInitState {
+            mouse: None,
+            config: MouseConfig::default(),
+            battery: None,
+            is_wireless: true,
+            is_connected: false,
+        };
+        assert!(!init.is_connected);
+        assert!(init.mouse.is_none());
+        assert_eq!(init.config, MouseConfig::default());
+        assert!(init.battery.is_none());
     }
 }
