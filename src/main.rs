@@ -65,6 +65,128 @@ fn attach_parent_console() {
     }
 }
 
+#[cfg(windows)]
+fn focus_existing_gui_window() {
+    unsafe {
+        unsafe extern "system" {
+            fn FindWindowW(lp_class_name: *const u16, lp_window_name: *const u16) -> isize;
+            fn IsIconic(h_wnd: isize) -> i32;
+            fn ShowWindow(h_wnd: isize, n_cmd_show: i32) -> i32;
+            fn SetForegroundWindow(h_wnd: isize) -> i32;
+        }
+
+        const SW_RESTORE: i32 = 9;
+        let title: Vec<u16> = "M-RustHub - G3 V2 Manager\0".encode_utf16().collect();
+
+        // Retry up to 10 times (50ms each) in case the first GUI instance is still creating its window
+        for attempt in 0..10 {
+            let hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
+            if hwnd != 0 {
+                if IsIconic(hwnd) != 0 {
+                    ShowWindow(hwnd, SW_RESTORE);
+                }
+                SetForegroundWindow(hwnd);
+                return;
+            }
+            if attempt < 9 {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn acquire_instance_lock_internal(
+    is_gui: bool,
+    gui_mutex_name: &str,
+    dev_mutex_name: &str,
+    dev_timeout_ms: u32,
+    focus_window: bool,
+) -> Result<(bool, Option<isize>, Option<isize>), String> {
+    unsafe {
+        unsafe extern "system" {
+            fn CreateMutexW(
+                lp_mutex_attributes: isize,
+                b_initial_owner: i32,
+                lp_name: *const u16,
+            ) -> isize;
+            fn WaitForSingleObject(h_handle: isize, dw_milliseconds: u32) -> u32;
+            fn ReleaseMutex(h_mutex: isize) -> i32;
+            fn CloseHandle(h_object: isize) -> i32;
+        }
+
+        const WAIT_OBJECT_0: u32 = 0x0000_0000;
+        const WAIT_ABANDONED: u32 = 0x0000_0080;
+
+        let is_acquired = |status: u32| status == WAIT_OBJECT_0 || status == WAIT_ABANDONED;
+
+        let mut gui_name_u16: Vec<u16> = gui_mutex_name.encode_utf16().collect();
+        gui_name_u16.push(0);
+        let mut dev_name_u16: Vec<u16> = dev_mutex_name.encode_utf16().collect();
+        dev_name_u16.push(0);
+
+        let gui_mutex = CreateMutexW(0, 0, gui_name_u16.as_ptr());
+        if gui_mutex == 0 {
+            return Ok((true, None, None));
+        }
+
+        // 1. Check immediately (0ms timeout) if a GUI instance is already running
+        if !is_acquired(WaitForSingleObject(gui_mutex, 0)) {
+            CloseHandle(gui_mutex);
+            if is_gui {
+                if focus_window {
+                    focus_existing_gui_window();
+                }
+                return Ok((false, None, None));
+            } else {
+                return Err(
+                    "M-RustHub GUI is currently running. Close the GUI window before using CLI commands."
+                        .into(),
+                );
+            }
+        }
+
+        // Release gui_mutex immediately if running in CLI mode; keep it locked if launching GUI
+        let retained_gui = if !is_gui {
+            ReleaseMutex(gui_mutex);
+            CloseHandle(gui_mutex);
+            None
+        } else {
+            Some(gui_mutex)
+        };
+
+        // 2. Acquire the device access mutex (wait up to dev_timeout_ms for any active CLI command to finish)
+        let dev_mutex = CreateMutexW(0, 0, dev_name_u16.as_ptr());
+        if dev_mutex == 0 {
+            return Ok((true, retained_gui, None));
+        }
+
+        if is_acquired(WaitForSingleObject(dev_mutex, dev_timeout_ms)) {
+            // Keep mutex handles open for the lifetime of the process; Windows releases them on exit
+            return Ok((true, retained_gui, Some(dev_mutex)));
+        }
+
+        CloseHandle(dev_mutex);
+        if let Some(h) = retained_gui {
+            ReleaseMutex(h);
+            CloseHandle(h);
+        }
+        Err("Another M-RustHub CLI command is currently busy with the mouse (timeout).".into())
+    }
+}
+
+#[cfg(windows)]
+fn acquire_instance_lock(is_gui: bool) -> Result<bool, String> {
+    acquire_instance_lock_internal(
+        is_gui,
+        "Local\\M_RustHub_Gui_Mutex",
+        "Local\\M_RustHub_Device_Mutex",
+        2000,
+        true,
+    )
+    .map(|(success, _, _)| success)
+}
+
 fn handle_cli(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
     if let Commands::Gui = cmd {
         gui::run_gui()?;
@@ -215,6 +337,17 @@ fn main() {
     }
 
     let args = Cli::parse();
+    let is_gui = matches!(args.command, Some(Commands::Gui) | None);
+
+    #[cfg(windows)]
+    match acquire_instance_lock(is_gui) {
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+    }
 
     match args.command {
         Some(Commands::Gui) | None => {
@@ -230,5 +363,271 @@ fn main() {
                 std::process::exit(1);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(windows)]
+    struct TestLockGuard {
+        gui: Option<isize>,
+        dev: Option<isize>,
+    }
+
+    #[cfg(windows)]
+    impl Drop for TestLockGuard {
+        fn drop(&mut self) {
+            unsafe {
+                unsafe extern "system" {
+                    fn ReleaseMutex(h: isize) -> i32;
+                    fn CloseHandle(h: isize) -> i32;
+                }
+                if let Some(h) = self.gui.take() {
+                    ReleaseMutex(h);
+                    CloseHandle(h);
+                }
+                if let Some(h) = self.dev.take() {
+                    ReleaseMutex(h);
+                    CloseHandle(h);
+                }
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_gui_first_instance_acquires_both_mutexes() {
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let gui_name = format!("Local\\M_RustHub_Test_Gui_{id}_1");
+        let dev_name = format!("Local\\M_RustHub_Test_Dev_{id}_1");
+
+        let res = acquire_instance_lock_internal(true, &gui_name, &dev_name, 1000, false);
+        assert!(res.is_ok());
+        let (success, gui_h, dev_h) = res.unwrap();
+        assert!(success);
+        assert!(gui_h.is_some());
+        assert!(dev_h.is_some());
+
+        let _guard = TestLockGuard {
+            gui: gui_h,
+            dev: dev_h,
+        };
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_gui_second_instance_returns_false() {
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let gui_name = format!("Local\\M_RustHub_Test_Gui_{id}_2");
+        let dev_name = format!("Local\\M_RustHub_Test_Dev_{id}_2");
+
+        let res1 = acquire_instance_lock_internal(true, &gui_name, &dev_name, 1000, false);
+        assert!(res1.is_ok());
+        let (success1, gui_h1, dev_h1) = res1.unwrap();
+        assert!(success1);
+        let _guard1 = TestLockGuard {
+            gui: gui_h1,
+            dev: dev_h1,
+        };
+
+        let gui_name_clone = gui_name.clone();
+        let dev_name_clone = dev_name.clone();
+        let handle = std::thread::spawn(move || {
+            acquire_instance_lock_internal(true, &gui_name_clone, &dev_name_clone, 100, false)
+        });
+        let res2 = handle.join().unwrap();
+        assert!(res2.is_ok());
+        let (success2, gui_h2, dev_h2) = res2.unwrap();
+        assert!(!success2);
+        assert!(gui_h2.is_none());
+        assert!(dev_h2.is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_cli_blocked_when_gui_running() {
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let gui_name = format!("Local\\M_RustHub_Test_Gui_{id}_3");
+        let dev_name = format!("Local\\M_RustHub_Test_Dev_{id}_3");
+
+        let res1 = acquire_instance_lock_internal(true, &gui_name, &dev_name, 1000, false);
+        assert!(res1.is_ok());
+        let (success1, gui_h1, dev_h1) = res1.unwrap();
+        assert!(success1);
+        let _guard1 = TestLockGuard {
+            gui: gui_h1,
+            dev: dev_h1,
+        };
+
+        let gui_name_clone = gui_name.clone();
+        let dev_name_clone = dev_name.clone();
+        let handle = std::thread::spawn(move || {
+            acquire_instance_lock_internal(false, &gui_name_clone, &dev_name_clone, 100, false)
+        });
+        let res2 = handle.join().unwrap();
+        assert!(res2.is_err());
+        let err_msg = res2.unwrap_err();
+        assert!(
+            err_msg.contains("M-RustHub GUI is currently running"),
+            "unexpected error: {err_msg}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_cli_succeeds_when_gui_closed_and_releases_gui_mutex() {
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let gui_name = format!("Local\\M_RustHub_Test_Gui_{id}_4");
+        let dev_name = format!("Local\\M_RustHub_Test_Dev_{id}_4");
+
+        let res = acquire_instance_lock_internal(false, &gui_name, &dev_name, 1000, false);
+        assert!(res.is_ok());
+        let (success, gui_h, dev_h) = res.unwrap();
+        assert!(success);
+        assert!(gui_h.is_none(), "CLI must not retain GUI mutex");
+        assert!(dev_h.is_some(), "CLI must retain device mutex");
+
+        let _guard = TestLockGuard {
+            gui: None,
+            dev: dev_h,
+        };
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_cli_waits_for_another_cli_and_succeeds() {
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let gui_name = format!("Local\\M_RustHub_Test_Gui_{id}_5");
+        let dev_name = format!("Local\\M_RustHub_Test_Dev_{id}_5");
+
+        let dev_name_t1 = dev_name.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let t1 = std::thread::spawn(move || {
+            let res = acquire_instance_lock_internal(false, "Local\\DummyGui", &dev_name_t1, 1000, false);
+            let (_ok, _gui, dev) = res.unwrap();
+            tx.send(()).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let _guard = TestLockGuard { gui: None, dev };
+        });
+
+        rx.recv().unwrap();
+
+        let gui_name_t2 = gui_name.clone();
+        let dev_name_t2 = dev_name.clone();
+        let t2 = std::thread::spawn(move || {
+            acquire_instance_lock_internal(false, &gui_name_t2, &dev_name_t2, 1000, false)
+        });
+
+        let res2 = t2.join().unwrap();
+        t1.join().unwrap();
+
+        assert!(res2.is_ok());
+        let (success2, _, dev_h2) = res2.unwrap();
+        assert!(success2);
+        let _guard2 = TestLockGuard {
+            gui: None,
+            dev: dev_h2,
+        };
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_gui_waits_for_active_cli_and_succeeds() {
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let gui_name = format!("Local\\M_RustHub_Test_Gui_{id}_7");
+        let dev_name = format!("Local\\M_RustHub_Test_Dev_{id}_7");
+
+        let dev_name_t1 = dev_name.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let t1 = std::thread::spawn(move || {
+            let res = acquire_instance_lock_internal(false, "Local\\DummyGui3", &dev_name_t1, 1000, false);
+            let (_ok, _gui, dev) = res.unwrap();
+            tx.send(()).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let _guard = TestLockGuard { gui: None, dev };
+        });
+
+        rx.recv().unwrap();
+
+        let gui_name_t2 = gui_name.clone();
+        let dev_name_t2 = dev_name.clone();
+        let t2 = std::thread::spawn(move || {
+            acquire_instance_lock_internal(true, &gui_name_t2, &dev_name_t2, 1000, false)
+        });
+
+        let res2 = t2.join().unwrap();
+        t1.join().unwrap();
+
+        assert!(res2.is_ok());
+        let (success2, gui_h2, dev_h2) = res2.unwrap();
+        assert!(success2);
+        assert!(gui_h2.is_some());
+        assert!(dev_h2.is_some());
+        let _guard2 = TestLockGuard {
+            gui: gui_h2,
+            dev: dev_h2,
+        };
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_cli_times_out_when_device_mutex_held_too_long() {
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let gui_name = format!("Local\\M_RustHub_Test_Gui_{id}_6");
+        let dev_name = format!("Local\\M_RustHub_Test_Dev_{id}_6");
+
+        let dev_name_t1 = dev_name.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let t1 = std::thread::spawn(move || {
+            let res = acquire_instance_lock_internal(false, "Local\\DummyGui2", &dev_name_t1, 1000, false);
+            let (_ok, _gui, dev) = res.unwrap();
+            tx.send(()).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            let _guard = TestLockGuard { gui: None, dev };
+        });
+
+        rx.recv().unwrap();
+
+        let gui_name_t2 = gui_name.clone();
+        let dev_name_t2 = dev_name.clone();
+        let t2 = std::thread::spawn(move || {
+            acquire_instance_lock_internal(false, &gui_name_t2, &dev_name_t2, 50, false)
+        });
+
+        let res2 = t2.join().unwrap();
+        t1.join().unwrap();
+
+        assert!(res2.is_err());
+        let err_msg = res2.unwrap_err();
+        assert!(
+            err_msg.contains("timeout"),
+            "unexpected error message: {err_msg}"
+        );
     }
 }
