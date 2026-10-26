@@ -521,10 +521,6 @@ fn restore_button(ui: &mut egui::Ui, enabled: bool) -> (egui::Response, bool) {
     let is_highlighted = enabled && (response.hovered() || response.has_focus());
     let is_factory = is_highlighted && is_shift;
 
-    if response.hovered() && enabled {
-        ui.ctx().request_repaint();
-    }
-
     let (fill, stroke, text_color, label) = if !enabled {
         (
             COLOR_BG_ELEMENT,
@@ -1744,7 +1740,8 @@ impl App {
 
                                     // Left: status allocated zone (remaining width up to 10px before buttons)
                                     let status_zone_w = (ui.available_width() - total_btn_w - 10.0).max(180.0);
-                                    let (status_rect, _) = ui.allocate_exact_size(Vec2::new(status_zone_w, 38.0), egui::Sense::hover());
+                                    let (status_rect, status_resp) =
+                                        ui.allocate_exact_size(Vec2::new(status_zone_w, 38.0), egui::Sense::hover());
                                     let cy = status_rect.center().y;
 
                                     // Icon centered at cy
@@ -1754,6 +1751,9 @@ impl App {
                                     // Text centered at exact cy with Align2::LEFT_CENTER
                                     let text_pos = Pos2::new(status_rect.min.x + 28.0, cy);
                                     let max_text_chars = 36;
+                                    if status_text.chars().count() > max_text_chars {
+                                        status_resp.on_hover_text(&status_text);
+                                    }
                                     let display_text = if status_text.chars().count() > max_text_chars {
                                         let mut s: String = status_text.chars().take(max_text_chars - 1).collect();
                                         s.push('…');
