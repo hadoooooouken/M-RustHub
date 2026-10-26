@@ -100,3 +100,9 @@ You can build a clean release binary (without any compiler artifacts) using eith
 
 The clean standalone executable will be placed directly in:
 `release\m_rusthub.exe`
+
+---
+
+## 📄 License
+
+This project is open-source and available under the [MIT License](LICENSE).
