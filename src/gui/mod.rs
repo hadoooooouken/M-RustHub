@@ -985,12 +985,7 @@ impl App {
             None
         };
 
-        let initial_stages = if init.is_connected {
-            init.config.dpi_stages_count
-        } else {
-            1
-        };
-        let initial_h = target_window_height(initial_stages);
+        let initial_h = target_window_height(init.config.dpi_stages_count);
 
         Self {
             tx_req,
@@ -1831,12 +1826,7 @@ impl eframe::App for App {
 
 pub fn run_gui() -> eframe::Result {
     let init_state = AppInitState::detect();
-    let initial_stages = if init_state.is_connected {
-        init_state.config.dpi_stages_count
-    } else {
-        1
-    };
-    let initial_h = target_window_height(initial_stages);
+    let initial_h = target_window_height(init_state.config.dpi_stages_count);
     let icon_bytes = include_bytes!("../../assets/icon_64x64.rgba");
     let icon_data = egui::IconData {
         rgba: icon_bytes.to_vec(),
@@ -2200,6 +2190,7 @@ mod tests {
         assert!(init.mouse.is_none());
         assert_eq!(init.config, MouseConfig::default());
         assert!(init.battery.is_none());
+        assert_eq!(target_window_height(init.config.dpi_stages_count), 660.0);
     }
 
     #[test]
