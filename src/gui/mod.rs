@@ -1042,9 +1042,19 @@ impl App {
                 let has_user_edits = self.config != self.saved_config;
                 if !has_user_edits {
                     self.config = config.clone();
-                } else if self.config.active_dpi_stage == self.saved_config.active_dpi_stage {
-                    // User didn't customize the active stage, sync it with hardware
-                    self.config.active_dpi_stage = config.active_dpi_stage;
+                } else {
+                    // Sync hardware fields not exposed in the UI to avoid overwriting
+                    // them with defaults and causing permanent unsaved changes state
+                    self.config.lod = config.lod;
+                    self.config.sensor_flags = config.sensor_flags;
+                    self.config.scroll_flag = config.scroll_flag;
+                    self.config.highspeed_mode = config.highspeed_mode;
+                    self.config.sensor_angle = config.sensor_angle;
+
+                    if self.config.active_dpi_stage == self.saved_config.active_dpi_stage {
+                        let count = self.config.dpi_stages_count.clamp(1, 6);
+                        self.config.active_dpi_stage = config.active_dpi_stage.clamp(1, count);
+                    }
                 }
                 self.saved_config = config;
                 self.battery = battery;
@@ -1054,7 +1064,7 @@ impl App {
                 if self.status_msg.as_ref().map_or(true, |(m, _)| !m.starts_with("Applying") && !m.starts_with("Reloading")) {
                     self.set_status("Connected to MCHOSE mouse");
                 }
-                false
+                true
             }
             WorkerResponse::Reloaded {
                 config,
@@ -2136,7 +2146,45 @@ mod tests {
         });
 
         assert_eq!(app.config.active_dpi_stage, 2, "User's UI-selected stage must be preserved");
-        assert_eq!(app.saved_config.active_dpi_stage, 4);
+    }
+
+    #[test]
+    fn test_reconnect_syncs_hidden_hardware_fields_when_user_has_edits() {
+        let mut app = create_test_app();
+        // User changed debounce before mouse connected
+        app.config.debounce_ms = 4;
+        assert_ne!(app.config, app.saved_config);
+
+        // Hardware wakes up with non-default hidden hardware settings
+        let mut hw_config = MouseConfig::default();
+        hw_config.lod = Lod::Low1mm;
+        hw_config.sensor_flags = 0xAA;
+        hw_config.scroll_flag = 0x55;
+        hw_config.highspeed_mode = 1;
+        hw_config.sensor_angle = 5;
+        hw_config.debounce_ms = 8;
+
+        let repaint = app.on_worker_response(WorkerResponse::Connected {
+            config: hw_config.clone(),
+            battery: None,
+            is_wireless: true,
+        });
+
+        assert!(repaint, "Connecting mouse should trigger repaint");
+        // Hidden fields must be synced to hardware values so they aren't clobbered on apply
+        assert_eq!(app.config.lod, Lod::Low1mm);
+        assert_eq!(app.config.sensor_flags, 0xAA);
+        assert_eq!(app.config.scroll_flag, 0x55);
+        assert_eq!(app.config.highspeed_mode, 1);
+        assert_eq!(app.config.sensor_angle, 5);
+        // User edit must be kept
+        assert_eq!(app.config.debounce_ms, 4);
+        assert!(app.has_unsaved_changes);
+
+        // If user reverts the debounce edit back to hardware value, unsaved changes must clear
+        app.config.debounce_ms = 8;
+        app.has_unsaved_changes = app.config != app.saved_config;
+        assert!(!app.has_unsaved_changes, "Reverting edits should clear unsaved changes since hidden fields match");
     }
 
     #[test]
