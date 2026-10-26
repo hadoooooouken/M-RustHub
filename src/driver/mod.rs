@@ -181,12 +181,19 @@ impl MchoseMouse {
     pub fn open() -> Result<Self, DriverError> {
         let api = HidApi::new()?;
         
-        let target = api.device_list().find(|d| {
+        let is_target = |d: &hidapi::DeviceInfo, expected_pid: u16| {
             (d.vendor_id() == VENDOR_ID_MCHOSE || d.vendor_id() == VENDOR_ID_REALTEK)
-                && (d.product_id() == PID_G3_V2_WIRED || d.product_id() == PID_G3_V2_WIRELESS)
+                && d.product_id() == expected_pid
                 && d.usage_page() == USAGE_PAGE_CONFIG
                 && d.usage() == USAGE_CONFIG
-        });
+        };
+
+        // Prefer wired connection first (e.g. charging while 2.4G dongle is plugged in),
+        // fallback to wireless dongle if wired is not connected.
+        let target = api
+            .device_list()
+            .find(|d| is_target(d, PID_G3_V2_WIRED))
+            .or_else(|| api.device_list().find(|d| is_target(d, PID_G3_V2_WIRELESS)));
 
         let d_info = target.ok_or(DriverError::DeviceNotFound)?;
         let vid = d_info.vendor_id();
