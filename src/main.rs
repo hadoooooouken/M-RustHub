@@ -67,6 +67,21 @@ fn handle_cli(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
 
     let mouse = MchoseMouse::open()?;
 
+    // Check if mouse is awake and ready before attempting to write settings
+    match &cmd {
+        Commands::SetStage { .. }
+        | Commands::SetLevels { .. }
+        | Commands::SetDpi { .. }
+        | Commands::SetRate { .. }
+        | Commands::SetDebounce { .. }
+        | Commands::SetSleep { .. } => {
+            if !mouse.get_online_status()? {
+                return Err("Mouse is offline or sleeping. Move mouse or turn it on to wake it up before changing settings.".into());
+            }
+        }
+        Commands::Status | Commands::Gui => {}
+    }
+
     match cmd {
         Commands::Status => {
             println!("==================================================");

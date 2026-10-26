@@ -446,6 +446,9 @@ impl MchoseMouse {
 
     /// Write updated configuration to the mouse
     pub fn set_config(&self, cfg: &MouseConfig) -> Result<(), DriverError> {
+        if !self.get_online_status()? {
+            return Err(DriverError::Protocol("Mouse is offline or sleeping".to_string()));
+        }
         let pkt = Self::build_config_packet(cfg);
         self.write_packet(&pkt)?;
         // Read ACK packet [170, 15, ...] from mouse to avoid leaving it in the OS HID queue

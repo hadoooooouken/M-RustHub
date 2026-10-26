@@ -600,16 +600,18 @@ pub struct AppInitState {
 impl AppInitState {
     pub fn detect() -> Self {
         if let Ok(m) = MchoseMouse::open() {
-            if let Ok(cfg) = m.get_config() {
-                let bat = m.get_battery().ok();
-                let is_wireless = m.info.is_wireless;
-                return Self {
-                    mouse: Some(m),
-                    config: cfg,
-                    battery: bat,
-                    is_wireless,
-                    is_connected: true,
-                };
+            if m.get_online_status().unwrap_or(false) {
+                if let Ok(cfg) = m.get_config() {
+                    let bat = m.get_battery().ok();
+                    let is_wireless = m.info.is_wireless;
+                    return Self {
+                        mouse: Some(m),
+                        config: cfg,
+                        battery: bat,
+                        is_wireless,
+                        is_connected: true,
+                    };
+                }
             }
         }
         Self {
@@ -651,45 +653,59 @@ fn start_worker(
                         active_mouse = MchoseMouse::open().ok();
                     }
                     if let Some(m) = active_mouse {
-                        match m.get_config() {
-                            Ok(cfg) => {
-                                let bat = m.get_battery().ok();
-                                let is_wireless = m.info.is_wireless;
-                                last_known_stage = Some(cfg.active_dpi_stage);
-                                consecutive_poll_errors = 0;
-                                mouse = Some(m);
-                                let _ = tx_resp.send(WorkerResponse::Reloaded {
-                                    config: cfg,
-                                    battery: bat,
-                                    is_wireless,
-                                });
-                            }
-                            Err(_) => {
-                                drop(m);
-                                match MchoseMouse::open() {
-                                    Ok(m2) => match m2.get_config() {
-                                        Ok(cfg) => {
-                                            let bat = m2.get_battery().ok();
-                                            let is_wireless = m2.info.is_wireless;
-                                            last_known_stage = Some(cfg.active_dpi_stage);
-                                            consecutive_poll_errors = 0;
-                                            mouse = Some(m2);
-                                            let _ = tx_resp.send(WorkerResponse::Reloaded {
-                                                config: cfg,
-                                                battery: bat,
-                                                is_wireless,
-                                            });
+                        if !m.get_online_status().unwrap_or(false) {
+                            mouse = None;
+                            last_reconnect_poll = Instant::now();
+                            let _ = tx_resp.send(WorkerResponse::Disconnected("Mouse offline".into()));
+                        } else {
+                            match m.get_config() {
+                                Ok(cfg) => {
+                                    let bat = m.get_battery().ok();
+                                    let is_wireless = m.info.is_wireless;
+                                    last_known_stage = Some(cfg.active_dpi_stage);
+                                    consecutive_poll_errors = 0;
+                                    mouse = Some(m);
+                                    let _ = tx_resp.send(WorkerResponse::Reloaded {
+                                        config: cfg,
+                                        battery: bat,
+                                        is_wireless,
+                                    });
+                                }
+                                Err(_) => {
+                                    drop(m);
+                                    match MchoseMouse::open() {
+                                        Ok(m2) => {
+                                            if !m2.get_online_status().unwrap_or(false) {
+                                                mouse = None;
+                                                last_reconnect_poll = Instant::now();
+                                                let _ = tx_resp.send(WorkerResponse::Disconnected("Mouse offline".into()));
+                                            } else {
+                                                match m2.get_config() {
+                                                    Ok(cfg) => {
+                                                        let bat = m2.get_battery().ok();
+                                                        let is_wireless = m2.info.is_wireless;
+                                                        last_known_stage = Some(cfg.active_dpi_stage);
+                                                        consecutive_poll_errors = 0;
+                                                        mouse = Some(m2);
+                                                        let _ = tx_resp.send(WorkerResponse::Reloaded {
+                                                            config: cfg,
+                                                            battery: bat,
+                                                            is_wireless,
+                                                        });
+                                                    }
+                                                    Err(e) => {
+                                                        mouse = None;
+                                                        last_reconnect_poll = Instant::now();
+                                                        let _ = tx_resp.send(WorkerResponse::Disconnected(e.to_string()));
+                                                    }
+                                                }
+                                            }
                                         }
                                         Err(e) => {
                                             mouse = None;
                                             last_reconnect_poll = Instant::now();
                                             let _ = tx_resp.send(WorkerResponse::Disconnected(e.to_string()));
                                         }
-                                    },
-                                    Err(e) => {
-                                        mouse = None;
-                                        last_reconnect_poll = Instant::now();
-                                        let _ = tx_resp.send(WorkerResponse::Disconnected(e.to_string()));
                                     }
                                 }
                             }
@@ -705,33 +721,46 @@ fn start_worker(
                         active_mouse = MchoseMouse::open().ok();
                     }
                     if let Some(m) = active_mouse {
-                        match m.set_config(&cfg) {
-                            Ok(_) => {
-                                let norm_count = cfg.dpi_stages_count.clamp(1, 6);
-                                last_known_stage = Some(cfg.active_dpi_stage.clamp(1, norm_count));
-                                consecutive_poll_errors = 0;
-                                mouse = Some(m);
-                                let _ = tx_resp.send(WorkerResponse::ApplySuccess);
-                            }
-                            Err(e) => {
-                                drop(m);
-                                let _ = tx_resp.send(WorkerResponse::ApplyError(e.to_string()));
-                                match MchoseMouse::open() {
-                                    Ok(m2) => {
-                                        if let Ok(cfg2) = m2.get_config() {
-                                            last_known_stage = Some(cfg2.active_dpi_stage);
-                                            consecutive_poll_errors = 0;
-                                            mouse = Some(m2);
-                                        } else {
+                        if !m.get_online_status().unwrap_or(false) {
+                            mouse = None;
+                            last_reconnect_poll = Instant::now();
+                            let _ = tx_resp.send(WorkerResponse::ApplyError("Mouse is offline or sleeping".into()));
+                            let _ = tx_resp.send(WorkerResponse::Disconnected("Mouse offline".into()));
+                        } else {
+                            match m.set_config(&cfg) {
+                                Ok(_) => {
+                                    let norm_count = cfg.dpi_stages_count.clamp(1, 6);
+                                    last_known_stage = Some(cfg.active_dpi_stage.clamp(1, norm_count));
+                                    consecutive_poll_errors = 0;
+                                    mouse = Some(m);
+                                    let _ = tx_resp.send(WorkerResponse::ApplySuccess);
+                                }
+                                Err(e) => {
+                                    drop(m);
+                                    let _ = tx_resp.send(WorkerResponse::ApplyError(e.to_string()));
+                                    match MchoseMouse::open() {
+                                        Ok(m2) => {
+                                            if m2.get_online_status().unwrap_or(false) {
+                                                if let Ok(cfg2) = m2.get_config() {
+                                                    last_known_stage = Some(cfg2.active_dpi_stage);
+                                                    consecutive_poll_errors = 0;
+                                                    mouse = Some(m2);
+                                                } else {
+                                                    mouse = None;
+                                                    last_reconnect_poll = Instant::now();
+                                                    let _ = tx_resp.send(WorkerResponse::Disconnected("Mouse offline".into()));
+                                                }
+                                            } else {
+                                                mouse = None;
+                                                last_reconnect_poll = Instant::now();
+                                                let _ = tx_resp.send(WorkerResponse::Disconnected("Mouse offline".into()));
+                                            }
+                                        }
+                                        Err(e2) => {
                                             mouse = None;
                                             last_reconnect_poll = Instant::now();
-                                            let _ = tx_resp.send(WorkerResponse::Disconnected("Mouse offline".into()));
+                                            let _ = tx_resp.send(WorkerResponse::Disconnected(e2.to_string()));
                                         }
-                                    }
-                                    Err(e2) => {
-                                        mouse = None;
-                                        last_reconnect_poll = Instant::now();
-                                        let _ = tx_resp.send(WorkerResponse::Disconnected(e2.to_string()));
                                     }
                                 }
                             }
@@ -746,17 +775,19 @@ fn start_worker(
                     if mouse.is_none() && last_reconnect_poll.elapsed() >= Duration::from_millis(500) {
                         last_reconnect_poll = Instant::now();
                         if let Ok(m) = MchoseMouse::open() {
-                            if let Ok(cfg) = m.get_config() {
-                                let bat = m.get_battery().ok();
-                                let is_wireless = m.info.is_wireless;
-                                last_known_stage = Some(cfg.active_dpi_stage);
-                                consecutive_poll_errors = 0;
-                                mouse = Some(m);
-                                let _ = tx_resp.send(WorkerResponse::Connected {
-                                    config: cfg,
-                                    battery: bat,
-                                    is_wireless,
-                                });
+                            if m.get_online_status().unwrap_or(false) {
+                                if let Ok(cfg) = m.get_config() {
+                                    let bat = m.get_battery().ok();
+                                    let is_wireless = m.info.is_wireless;
+                                    last_known_stage = Some(cfg.active_dpi_stage);
+                                    consecutive_poll_errors = 0;
+                                    mouse = Some(m);
+                                    let _ = tx_resp.send(WorkerResponse::Connected {
+                                        config: cfg,
+                                        battery: bat,
+                                        is_wireless,
+                                    });
+                                }
                             }
                         }
                     }
@@ -764,8 +795,24 @@ fn start_worker(
                     if let Some(m) = mouse.take() {
                         let mut mouse_ok = true;
 
+                        // Fast check online status (1-2ms) before attempting any heavy queries
+                        if m.info.is_wireless {
+                            match m.get_online_status() {
+                                Ok(true) => {}
+                                Ok(false) => {
+                                    mouse_ok = false;
+                                }
+                                Err(_) => {
+                                    consecutive_poll_errors += 1;
+                                    if consecutive_poll_errors > 4 {
+                                        mouse_ok = false;
+                                    }
+                                }
+                            }
+                        }
+
                         // 1. Fast poll for active DPI stage (~200ms) to detect physical mouse button presses
-                        if last_stage_poll.elapsed() >= Duration::from_millis(200) {
+                        if mouse_ok && last_stage_poll.elapsed() >= Duration::from_millis(200) {
                             last_stage_poll = Instant::now();
                             match m.get_config() {
                                 Ok(cfg) => {
@@ -1973,5 +2020,19 @@ mod tests {
         assert!(init.mouse.is_none());
         assert_eq!(init.config, MouseConfig::default());
         assert!(init.battery.is_none());
+    }
+
+    #[test]
+    fn test_apply_error_preserves_unsaved_changes() {
+        let mut app = create_test_app();
+        app.config.debounce_ms = 15;
+        app.has_unsaved_changes = app.config != app.saved_config;
+        assert!(app.has_unsaved_changes);
+
+        app.on_worker_response(WorkerResponse::ApplyError("Mouse is offline or sleeping".into()));
+        assert!(app.has_unsaved_changes);
+        assert_eq!(app.config.debounce_ms, 15);
+        assert_ne!(app.config.debounce_ms, app.saved_config.debounce_ms);
+        assert!(app.status_msg.as_ref().unwrap().0.contains("Save error: Mouse is offline or sleeping"));
     }
 }
