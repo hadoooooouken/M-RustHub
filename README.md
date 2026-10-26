@@ -23,9 +23,9 @@ Zero Electron. Zero Chinese cloud telemetry. 100% offline and instant.
 | Feature | Official M HUB Client | M-RustHub (This App) |
 | :--- | :--- | :--- |
 | **Technology** | Electron + WebView (Next.js) | Native Rust (`eframe` / `egui` + `hidapi`) |
-| **Binary Size** | ~250 MB | **~6.8 MB** |
-| **RAM Usage** | ~350–500 MB | **~15–25 MB** |
-| **Startup Time** | 3–8 seconds (often hangs on white screen) | **< 15 milliseconds** |
+| **Binary Size** | ~250 MB | **~6.5 MB** |
+| **RAM Usage** | High (Chromium / Electron runtime) | **Minimal (lightweight native app)** |
+| **Startup Time** | Multi-second delay (loads web engine) | **Instant** |
 | **Offline Capability** | ❌ Fails when Chinese CDN is down | **✅ 100% Offline (No Internet needed)** |
 | **CLI / Automation** | ❌ No | **✅ Full CLI support (hotkeys/scripts)** |
 
