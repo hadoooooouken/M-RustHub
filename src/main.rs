@@ -143,10 +143,19 @@ fn handle_cli(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::SetDpi { dpi, stage } => {
+            if dpi < crate::driver::MIN_DPI || dpi > crate::driver::MAX_DPI || dpi % crate::driver::DPI_STEP != 0 {
+                return Err(format!(
+                    "DPI must be between {} and {} and a multiple of {} DPI",
+                    crate::driver::MIN_DPI,
+                    crate::driver::MAX_DPI,
+                    crate::driver::DPI_STEP
+                )
+                .into());
+            }
             let mut cfg = mouse.get_config()?;
             let target_stage = stage.map(|s| s as usize).unwrap_or(cfg.active_dpi_stage);
             let stage_idx = target_stage.clamp(1, 6) - 1;
-            cfg.dpi_stages[stage_idx] = dpi as u16;
+            cfg.dpi_stages[stage_idx] = dpi;
             mouse.set_config(&cfg)?;
             println!("✓ Stage #{} DPI set to {} DPI", target_stage, dpi);
         }

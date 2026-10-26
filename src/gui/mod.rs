@@ -79,21 +79,21 @@ fn format_dpi(dpi: u16) -> String {
     }
 }
 
-/// Decrement DPI by DPI_STEP, clamping to [MIN_DPI, MAX_DPI].
+/// Decrement DPI to previous multiple of DPI_STEP, clamping to [MIN_DPI, MAX_DPI].
 /// If the value is already outside [MIN_DPI, MAX_DPI] or at MIN_DPI, leaves it untouched.
 pub fn step_dpi_down(cur: u16) -> u16 {
     if cur > MIN_DPI && cur <= MAX_DPI {
-        cur.saturating_sub(DPI_STEP).max(MIN_DPI)
+        ((cur - 1) / DPI_STEP * DPI_STEP).max(MIN_DPI)
     } else {
         cur
     }
 }
 
-/// Increment DPI by DPI_STEP, clamping to [MIN_DPI, MAX_DPI].
+/// Increment DPI to next multiple of DPI_STEP, clamping to [MIN_DPI, MAX_DPI].
 /// If the value is already outside [MIN_DPI, MAX_DPI] or at MAX_DPI, leaves it untouched.
 pub fn step_dpi_up(cur: u16) -> u16 {
     if cur >= MIN_DPI && cur < MAX_DPI {
-        (cur + DPI_STEP).min(MAX_DPI)
+        ((cur / DPI_STEP + 1) * DPI_STEP).min(MAX_DPI)
     } else {
         cur
     }
@@ -1902,6 +1902,24 @@ mod tests {
         // MUST NOT be spoiled or raised to 100 on clicking +/- buttons:
         assert_eq!(step_dpi_up(50), 50);
         assert_eq!(step_dpi_down(50), 50);
+    }
+
+    #[test]
+    fn test_step_dpi_unaligned_snaps_to_grid() {
+        assert_eq!(step_dpi_up(850), 900);
+        assert_eq!(step_dpi_down(850), 800);
+
+        assert_eq!(step_dpi_up(1234), 1300);
+        assert_eq!(step_dpi_down(1234), 1200);
+
+        assert_eq!(step_dpi_up(105), 200);
+        assert_eq!(step_dpi_down(105), 100);
+
+        assert_eq!(step_dpi_up(150), 200);
+        assert_eq!(step_dpi_down(150), 100);
+
+        assert_eq!(step_dpi_up(11950), 12000);
+        assert_eq!(step_dpi_down(11950), 11900);
     }
 
     #[test]
