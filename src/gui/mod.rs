@@ -970,6 +970,13 @@ impl App {
         self.status_msg = Some((msg.to_string(), Instant::now()));
     }
 
+    pub(crate) fn set_dpi_stages_count(&mut self, count: usize) {
+        self.config.dpi_stages_count = count;
+        if self.config.active_dpi_stage > count {
+            self.config.active_dpi_stage = count;
+        }
+    }
+
     fn on_worker_response(&mut self, resp: WorkerResponse) -> bool {
         match resp {
             WorkerResponse::Connected {
@@ -1254,12 +1261,7 @@ impl eframe::App for App {
                                             for count in 1..=6 {
                                                 let is_selected = self.config.dpi_stages_count == count;
                                                 if level_count_button(ui, count, is_selected).clicked() && !is_selected {
-                                                    self.config.dpi_stages_count = count;
-                                                    if count == self.saved_config.dpi_stages_count {
-                                                        self.config.active_dpi_stage = self.saved_config.active_dpi_stage.clamp(1, count);
-                                                    } else if self.config.active_dpi_stage > count {
-                                                        self.config.active_dpi_stage = count;
-                                                    }
+                                                    self.set_dpi_stages_count(count);
                                                 }
                                                 if count < 6 {
                                                     ui.add_space(4.0);
@@ -2273,5 +2275,32 @@ mod tests {
         run_frame(&ctx, r9, &mut val, &mut row_activated, &mut btn_minus_clicked, &mut btn_plus_clicked, &mut slider_changed);
 
         assert!(row_activated, "Row must be activated when clicking row background");
+    }
+
+    #[test]
+    fn test_set_dpi_stages_count_preserves_selected_active_stage() {
+        let mut app = create_test_app();
+        app.saved_config.dpi_stages_count = 6;
+        app.saved_config.active_dpi_stage = 1;
+        app.config.dpi_stages_count = 6;
+        app.config.active_dpi_stage = 3; // user selected Stage 3
+
+        // Switch to 4 levels
+        app.set_dpi_stages_count(4);
+        assert_eq!(app.config.dpi_stages_count, 4);
+        assert_eq!(app.config.active_dpi_stage, 3, "Stage 3 is within 4 levels, should be preserved");
+
+        // Switch back to 6 levels (matches saved_config.dpi_stages_count)
+        app.set_dpi_stages_count(6);
+        assert_eq!(app.config.dpi_stages_count, 6);
+        assert_eq!(
+            app.config.active_dpi_stage, 3,
+            "Switching back to saved count must not reset active stage to saved_config.active_dpi_stage"
+        );
+
+        // Switch down to 2 levels (3 > 2, clamps to 2)
+        app.set_dpi_stages_count(2);
+        assert_eq!(app.config.dpi_stages_count, 2);
+        assert_eq!(app.config.active_dpi_stage, 2, "Active stage clamped to count");
     }
 }
