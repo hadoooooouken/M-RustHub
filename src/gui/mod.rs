@@ -454,8 +454,9 @@ fn custom_slider_u8(
 }
 
 fn step_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
-    let desired_size = Vec2::new(44.0, 28.0);
+    let desired_size = Vec2::new(28.0, 28.0);
     let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
 
     let (fill, stroke, text_color) = if response.is_pointer_button_down_on() {
         (COLOR_BG_CARD, Stroke::new(1.0, COLOR_ACCENT), COLOR_TEXT_PRIMARY)
@@ -467,13 +468,37 @@ fn step_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
 
     ui.painter()
         .rect(rect, CornerRadius::same(6), fill, stroke, StrokeKind::Inside);
-    ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        label,
-        egui::FontId::new(12.0, egui::FontFamily::Proportional),
-        text_color,
-    );
+
+    let c = rect.center();
+    let arm = 5.5;
+    let icon_stroke = Stroke::new(1.8, text_color);
+    match label {
+        "-" | "−" => {
+            ui.painter().line_segment(
+                [Pos2::new(c.x - arm, c.y), Pos2::new(c.x + arm, c.y)],
+                icon_stroke,
+            );
+        }
+        "+" => {
+            ui.painter().line_segment(
+                [Pos2::new(c.x - arm, c.y), Pos2::new(c.x + arm, c.y)],
+                icon_stroke,
+            );
+            ui.painter().line_segment(
+                [Pos2::new(c.x, c.y - arm), Pos2::new(c.x, c.y + arm)],
+                icon_stroke,
+            );
+        }
+        _ => {
+            ui.painter().text(
+                c,
+                egui::Align2::CENTER_CENTER,
+                label,
+                egui::FontId::new(12.0, egui::FontFamily::Proportional),
+                text_color,
+            );
+        }
+    }
 
     response
 }
@@ -1413,7 +1438,7 @@ impl App {
                                                 row_ui.add_space(10.0);
 
                                                 // 3. Slider (takes remaining space)
-                                                let right_reserved = 80.0 + 8.0 + 44.0 + 4.0 + 44.0;
+                                                let right_reserved = 80.0 + 8.0 + 28.0 + 4.0 + 28.0;
                                                 let slider_w = (row_ui.available_width() - right_reserved - 10.0).max(60.0);
                                                 slider_rect = Rect::from_min_size(row_ui.cursor().min, Vec2::new(slider_w, 28.0));
                                                 if custom_slider_u16(row_ui, &mut self.config.dpi_stages[i], MIN_DPI, MAX_DPI, DPI_STEP, slider_w) {
@@ -1439,8 +1464,9 @@ impl App {
 
                                                 row_ui.add_space(8.0);
 
-                                                // 5. [-100] button
-                                                let btn_minus_resp = step_button(row_ui, "-100");
+                                                // 5. [-] button
+                                                let btn_minus_resp = step_button(row_ui, "-")
+                                                    .on_hover_text("-100 DPI");
                                                 btn_minus_rect = btn_minus_resp.rect;
                                                 if btn_minus_resp.clicked() {
                                                     let cur = self.config.dpi_stages[i];
@@ -1453,8 +1479,9 @@ impl App {
 
                                                 row_ui.add_space(4.0);
 
-                                                // 6. [+100] button
-                                                let btn_plus_resp = step_button(row_ui, "+100");
+                                                // 6. [+] button
+                                                let btn_plus_resp = step_button(row_ui, "+")
+                                                    .on_hover_text("+100 DPI");
                                                 btn_plus_rect = btn_plus_resp.rect;
                                                 if btn_plus_resp.clicked() {
                                                     let cur = self.config.dpi_stages[i];
@@ -2305,7 +2332,7 @@ mod tests {
                             row_ui.add_space(8.0);
 
                             // Minus button
-                            let m_resp = step_button(row_ui, "-100");
+                            let m_resp = step_button(row_ui, "-");
                             minus_rect = m_resp.rect;
                             minus_rect_out = m_resp.rect;
                             minus_resp = Some(m_resp);
@@ -2313,7 +2340,7 @@ mod tests {
                             row_ui.add_space(4.0);
 
                             // Plus button
-                            let p_resp = step_button(row_ui, "+100");
+                            let p_resp = step_button(row_ui, "+");
                             plus_rect = p_resp.rect;
                             plus_rect_out = p_resp.rect;
                             plus_resp = Some(p_resp);
