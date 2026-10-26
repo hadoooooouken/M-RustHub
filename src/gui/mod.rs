@@ -210,6 +210,27 @@ pub(crate) fn battery_display_info(
     }
 }
 
+pub(crate) fn active_dpi_display_info(
+    saved_config: &MouseConfig,
+    is_connected: bool,
+) -> (String, Color32, bool) {
+    if is_connected {
+        let active_idx = saved_config.active_dpi_stage.saturating_sub(1).min(5);
+        let active_dpi = saved_config.dpi_stages[active_idx];
+        (
+            format!("Active: {} DPI", format_dpi(active_dpi)),
+            COLOR_ACCENT,
+            true,
+        )
+    } else {
+        (
+            "Active: -- DPI".to_string(),
+            COLOR_TEXT_MUTED,
+            false,
+        )
+    }
+}
+
 fn draw_battery_badge(painter: &egui::Painter, min: Pos2, percent: Option<u8>, color: Color32) {
     let w = 18.0;
     let h = 10.0;
@@ -1242,9 +1263,8 @@ impl App {
                                                 .color(COLOR_TEXT_PRIMARY),
                                         );
 
-                                        let active_idx = self.saved_config.active_dpi_stage.saturating_sub(1).min(5);
-                                        let active_dpi = self.saved_config.dpi_stages[active_idx];
-                                        let active_str = format!("Active: {} DPI", format_dpi(active_dpi));
+                                        let (active_str, active_color, has_glow) =
+                                            active_dpi_display_info(&self.saved_config, self.is_connected);
 
                                         // Right align active readout flush with the card right edge
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1253,7 +1273,7 @@ impl App {
                                             ui.label(
                                                 RichText::new(active_str)
                                                     .font(font_dpi_value())
-                                                    .color(COLOR_ACCENT)
+                                                    .color(active_color)
                                                     .strong(),
                                             );
 
@@ -1261,8 +1281,10 @@ impl App {
 
                                             let (dot_rect, _) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), egui::Sense::hover());
                                             let c = dot_rect.center();
-                                            ui.painter().circle_filled(c, 5.5, COLOR_ACCENT_GLOW);
-                                            ui.painter().circle_filled(c, 3.5, COLOR_ACCENT);
+                                            if has_glow {
+                                                ui.painter().circle_filled(c, 5.5, COLOR_ACCENT_GLOW);
+                                            }
+                                            ui.painter().circle_filled(c, 3.5, active_color);
                                         });
                                     });
 
@@ -1902,6 +1924,33 @@ mod tests {
         assert_eq!(icon_color, COLOR_TEXT_MUTED);
         assert_eq!(text_color, COLOR_TEXT_MUTED);
         assert!(tooltip.contains("disconnected"), "tooltip: {tooltip}");
+    }
+
+    #[test]
+    fn test_active_dpi_display_info_connected() {
+        let mut cfg = MouseConfig::default();
+        cfg.active_dpi_stage = 2;
+        cfg.dpi_stages = [400, 800, 1600, 3200, 6400, 12000];
+
+        let (active_str, color, has_glow) = active_dpi_display_info(&cfg, true);
+        assert_eq!(active_str, "Active: 800 DPI");
+        assert_eq!(color, COLOR_ACCENT);
+        assert!(has_glow);
+
+        cfg.active_dpi_stage = 6;
+        let (active_str, color, has_glow) = active_dpi_display_info(&cfg, true);
+        assert_eq!(active_str, "Active: 12,000 DPI");
+        assert_eq!(color, COLOR_ACCENT);
+        assert!(has_glow);
+    }
+
+    #[test]
+    fn test_active_dpi_display_info_disconnected() {
+        let cfg = MouseConfig::default();
+        let (active_str, color, has_glow) = active_dpi_display_info(&cfg, false);
+        assert_eq!(active_str, "Active: -- DPI");
+        assert_eq!(color, COLOR_TEXT_MUTED);
+        assert!(!has_glow);
     }
 
     #[test]
