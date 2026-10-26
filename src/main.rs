@@ -166,9 +166,11 @@ fn handle_cli(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
                 .into());
             }
             let mut cfg = mouse.get_config()?;
-            let target_stage = stage.map(|s| s as usize).unwrap_or(cfg.active_dpi_stage);
-            let stage_idx = target_stage.clamp(1, 6) - 1;
-            cfg.dpi_stages[stage_idx] = dpi;
+            let target_stage = stage.map(|s| s as usize).unwrap_or(cfg.active_dpi_stage).clamp(1, 6);
+            if target_stage > cfg.dpi_stages_count {
+                cfg.dpi_stages_count = target_stage;
+            }
+            cfg.dpi_stages[target_stage - 1] = dpi;
             mouse.set_config(&cfg)?;
             println!("✓ Stage #{} DPI set to {} DPI", target_stage, dpi);
         }

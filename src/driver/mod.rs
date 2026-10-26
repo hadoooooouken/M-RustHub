@@ -308,13 +308,16 @@ impl MchoseMouse {
                 continue;
             }
             if let Ok(resp) = self.read_response(48, 150) {
-                return Ok(BatteryStatus {
-                    percent: resp[8],
-                    charging: resp[9] != 0,
-                });
+                let percent = resp[8];
+                if (1..=100).contains(&percent) {
+                    return Ok(BatteryStatus {
+                        percent,
+                        charging: resp[9] != 0,
+                    });
+                }
             }
         }
-        Err(DriverError::Protocol("Failed to read battery status".to_string()))
+        Err(DriverError::Protocol("Failed to read valid battery status".to_string()))
     }
 
     /// Get online connection status of the mouse (1 = online, 0 = sleep/offline)
