@@ -948,10 +948,9 @@ impl AppInitState {
     pub fn detect() -> Self {
         if let Ok(m) = MchoseMouse::open() {
             if m.get_online_status().unwrap_or(false) {
-                if let Ok(cfg) = m.get_config() {
+                if let (Ok(cfg), Ok(btn_mappings)) = (m.get_config(), m.get_button_mappings()) {
                     let bat = m.get_battery().ok();
                     let is_wireless = m.info.is_wireless;
-                    let btn_mappings = m.get_button_mappings().unwrap_or(DEFAULT_BUTTON_MAPPINGS);
                     return Self {
                         mouse: Some(m),
                         config: cfg,
@@ -1008,11 +1007,10 @@ fn start_worker(
                             last_reconnect_poll = Instant::now();
                             let _ = tx_resp.send(WorkerResponse::Disconnected("Mouse offline".into()));
                         } else {
-                            match m.get_config() {
-                                Ok(cfg) => {
+                            match (m.get_config(), m.get_button_mappings()) {
+                                (Ok(cfg), Ok(btn_mappings)) => {
                                     let bat = m.get_battery().ok();
                                     let is_wireless = m.info.is_wireless;
-                                    let btn_mappings = m.get_button_mappings().unwrap_or(DEFAULT_BUTTON_MAPPINGS);
                                     last_known_stage = Some(cfg.active_dpi_stage);
                                     consecutive_poll_errors = 0;
                                     mouse = Some(m);
@@ -1023,7 +1021,7 @@ fn start_worker(
                                         button_mappings: btn_mappings,
                                     });
                                 }
-                                Err(_) => {
+                                _ => {
                                     drop(m);
                                     match MchoseMouse::open() {
                                         Ok(m2) => {
@@ -1032,11 +1030,10 @@ fn start_worker(
                                                 last_reconnect_poll = Instant::now();
                                                 let _ = tx_resp.send(WorkerResponse::Disconnected("Mouse offline".into()));
                                             } else {
-                                                match m2.get_config() {
-                                                    Ok(cfg) => {
+                                                match (m2.get_config(), m2.get_button_mappings()) {
+                                                    (Ok(cfg), Ok(btn_mappings)) => {
                                                         let bat = m2.get_battery().ok();
                                                         let is_wireless = m2.info.is_wireless;
-                                                        let btn_mappings = m2.get_button_mappings().unwrap_or(DEFAULT_BUTTON_MAPPINGS);
                                                         last_known_stage = Some(cfg.active_dpi_stage);
                                                         consecutive_poll_errors = 0;
                                                         mouse = Some(m2);
@@ -1047,7 +1044,7 @@ fn start_worker(
                                                             button_mappings: btn_mappings,
                                                         });
                                                     }
-                                                    Err(e) => {
+                                                    (Err(e), _) | (_, Err(e)) => {
                                                         mouse = None;
                                                         last_reconnect_poll = Instant::now();
                                                         let _ = tx_resp.send(WorkerResponse::Disconnected(e.to_string()));
@@ -1139,10 +1136,9 @@ fn start_worker(
                         last_reconnect_poll = Instant::now();
                         if let Ok(m) = MchoseMouse::open() {
                             if m.get_online_status().unwrap_or(false) {
-                                if let Ok(cfg) = m.get_config() {
+                                if let (Ok(cfg), Ok(btn_mappings)) = (m.get_config(), m.get_button_mappings()) {
                                     let bat = m.get_battery().ok();
                                     let is_wireless = m.info.is_wireless;
-                                    let btn_mappings = m.get_button_mappings().unwrap_or(DEFAULT_BUTTON_MAPPINGS);
                                     last_known_stage = Some(cfg.active_dpi_stage);
                                     consecutive_poll_errors = 0;
                                     mouse = Some(m);

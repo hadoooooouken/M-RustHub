@@ -734,7 +734,7 @@ impl MchoseMouse {
         if key_index > 4 {
             return Err(DriverError::Protocol(format!("Invalid keyIndex {key_index}, expected 0..=4")));
         }
-        let mut mappings = self.get_button_mappings().unwrap_or(DEFAULT_BUTTON_MAPPINGS);
+        let mut mappings = self.get_button_mappings()?;
         mappings[key_index as usize] = action;
         self.set_button_mappings(&mappings)
     }
