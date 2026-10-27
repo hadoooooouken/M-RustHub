@@ -46,21 +46,23 @@ Simply run or double-click `m_rusthub.exe`:
 Features available in GUI:
 - **Live Battery Indicator** (Percentage & Charging status)
 - **Button Remapping**: Expandable **Remap** drawer to reassign all 5 physical buttons (Left, Right, Middle, Forward, Backward) with dedicated actions, adjust scroll direction, and reset to defaults
-- **Number of Levels selector (1 to 6)** — customize exactly how many DPI stages are active
-- **DPI customizer** (100 – 12,000 DPI) with interactive sliders and quick ±100 buttons
-- **Polling Rate selector** (125 Hz, 250 Hz, 500 Hz, 1000 Hz)
-- **Button Debounce Time**: 0 ms – 20 ms (anti-doubleclick tuning)
-- **Wireless Sleep Timeout**: 0 min – 100 min (0 = Never sleep)
-- **Instant Save to Flash** (Hardware memory)
-- **Factory Reset**: Hold <kbd>Shift</kbd> while hovering over the **Restore from mouse** button to reveal **Factory reset**
 
 <p align="center">
   <img src="screenshots/mrusthub-buttons_remap.webp" alt="M-RustHub - Mouse button remapping and scroll direction settings" />
 </p>
 
+- **Number of Levels selector (1 to 6)** — customize exactly how many DPI stages are active
+- **DPI customizer** (100 – 12,000 DPI) with interactive sliders and quick ±100 buttons
+
 <p align="center">
   <img src="screenshots/mrusthub-dpi_stages.webp" alt="M-RustHub - DPI levels and stage customizer" />
 </p>
+
+- **Polling Rate selector** (125 Hz, 250 Hz, 500 Hz, 1000 Hz)
+- **Button Debounce Time**: 0 ms – 20 ms (anti-doubleclick tuning)
+- **Wireless Sleep Timeout**: 0 min – 100 min (0 = Never sleep)
+- **Instant Save to Flash** (Hardware memory)
+- **Factory Reset**: Hold <kbd>Shift</kbd> while hovering over the **Restore from mouse** button to reveal **Factory reset**
 
 ---
 
