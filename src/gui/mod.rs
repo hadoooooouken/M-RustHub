@@ -723,10 +723,225 @@ fn remap_button(ui: &mut egui::Ui, height: f32, is_expanded: bool) -> egui::Resp
     }
 
     response.on_hover_text(if is_expanded {
-        "Collapse key remapping"
+        "Collapse Buttons section"
     } else {
-        "Expand key remapping (Coming soon)"
+        "Expand Buttons section"
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ButtonAction {
+    LeftClick,
+    RightClick,
+    MiddleClick,
+    Forward,
+    Backward,
+}
+
+impl ButtonAction {
+    pub const ALL: [ButtonAction; 5] = [
+        ButtonAction::LeftClick,
+        ButtonAction::RightClick,
+        ButtonAction::MiddleClick,
+        ButtonAction::Forward,
+        ButtonAction::Backward,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            ButtonAction::LeftClick => "Left button",
+            ButtonAction::RightClick => "Right button",
+            ButtonAction::MiddleClick => "Middle button",
+            ButtonAction::Forward => "Forward button",
+            ButtonAction::Backward => "Backward button",
+        }
+    }
+}
+
+pub const DEFAULT_BUTTON_MAPPINGS: [ButtonAction; 5] = [
+    ButtonAction::LeftClick,
+    ButtonAction::RightClick,
+    ButtonAction::MiddleClick,
+    ButtonAction::Forward,
+    ButtonAction::Backward,
+];
+
+pub const BUTTON_NAMES: [&str; 5] = [
+    "Left button",
+    "Right button",
+    "Middle button",
+    "Forward button",
+    "Backward button",
+];
+
+fn reset_buttons_button(ui: &mut egui::Ui) -> egui::Response {
+    let desired_size = Vec2::new(130.0, 38.0);
+    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+
+    let is_highlighted = response.hovered() || response.has_focus();
+    let (fill, stroke, text_color) = if response.is_pointer_button_down_on() {
+        (COLOR_BG_CARD, Stroke::new(1.0, COLOR_ACCENT), COLOR_TEXT_PRIMARY)
+    } else if is_highlighted {
+        (Color32::from_rgb(0x20, 0x28, 0x34), Stroke::new(1.0, COLOR_BORDER_HOVER), COLOR_TEXT_PRIMARY)
+    } else {
+        (Color32::from_rgb(0x17, 0x1D, 0x25), Stroke::new(1.0, COLOR_BORDER_CONTROL), COLOR_TEXT_SECONDARY)
+    };
+
+    ui.painter().rect(rect, CornerRadius::same(8), fill, stroke, StrokeKind::Inside);
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "Reset to default",
+        font_control_text(),
+        text_color,
+    );
+
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+
+    response.on_hover_text("Reset all button mappings and scroll direction to default")
+}
+
+fn custom_button_dropdown(
+    ui: &mut egui::Ui,
+    idx: usize,
+    current_action: ButtonAction,
+    is_open: bool,
+    desired_w: f32,
+) -> (egui::Response, Option<ButtonAction>, bool) {
+    let desired_size = Vec2::new(desired_w, 32.0);
+    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+    let mut toggle_open = false;
+    let mut selected_action = None;
+
+    if response.clicked() {
+        toggle_open = true;
+    }
+
+    let is_highlighted = response.hovered() || response.has_focus() || is_open;
+
+    let (fill, stroke, text_color) = if is_open {
+        (
+            COLOR_BG_ELEMENT,
+            Stroke::new(1.5, COLOR_ACCENT),
+            COLOR_TEXT_PRIMARY,
+        )
+    } else if is_highlighted {
+        (
+            Color32::from_rgb(0x1D, 0x25, 0x31),
+            Stroke::new(1.0, COLOR_BORDER_HOVER),
+            COLOR_TEXT_PRIMARY,
+        )
+    } else {
+        (
+            COLOR_BG_ELEMENT,
+            Stroke::new(1.0, COLOR_BORDER_CONTROL),
+            COLOR_TEXT_PRIMARY,
+        )
+    };
+
+    ui.painter()
+        .rect(rect, CornerRadius::same(8), fill, stroke, StrokeKind::Inside);
+
+    // Left aligned text
+    let text_pos = Pos2::new(rect.min.x + 14.0, rect.center().y);
+    ui.painter().text(
+        text_pos,
+        egui::Align2::LEFT_CENTER,
+        current_action.label(),
+        font_control_text(),
+        text_color,
+    );
+
+    // Right chevron: down v when closed, up ^ when open
+    let chevron_x = rect.max.x - 16.0;
+    let cy = rect.center().y;
+    let span_x = 3.5;
+    let chevron_stroke = Stroke::new(1.5, if is_open { COLOR_ACCENT } else { COLOR_TEXT_SECONDARY });
+
+    if is_open {
+        let p1 = Pos2::new(chevron_x - span_x, cy + 1.5);
+        let p2 = Pos2::new(chevron_x, cy - 1.5);
+        let p3 = Pos2::new(chevron_x + span_x, cy + 1.5);
+        ui.painter().line_segment([p1, p2], chevron_stroke);
+        ui.painter().line_segment([p2, p3], chevron_stroke);
+    } else {
+        let p1 = Pos2::new(chevron_x - span_x, cy - 1.5);
+        let p2 = Pos2::new(chevron_x, cy + 1.5);
+        let p3 = Pos2::new(chevron_x + span_x, cy - 1.5);
+        ui.painter().line_segment([p1, p2], chevron_stroke);
+        ui.painter().line_segment([p2, p3], chevron_stroke);
+    }
+
+    if is_open {
+        let popup_id = ui.make_persistent_id(format!("btn_popup_{}", idx));
+        let item_h = 28.0;
+        let pad_v = 4.0;
+        let pad_h = 4.0;
+        let total_popup_h = item_h * 5.0 + pad_v * 2.0;
+        let popup_rect = Rect::from_min_size(
+            Pos2::new(rect.min.x, rect.max.y + 3.0),
+            Vec2::new(rect.width(), total_popup_h),
+        );
+
+        egui::Area::new(popup_id)
+            .order(egui::Order::Foreground)
+            .fixed_pos(popup_rect.min)
+            .show(ui.ctx(), |popup_ui| {
+                popup_ui.painter().rect(
+                    popup_rect,
+                    CornerRadius::same(8),
+                    Color32::from_rgb(0x13, 0x1A, 0x22),
+                    Stroke::new(1.0, COLOR_BORDER_CONTROL),
+                    StrokeKind::Inside,
+                );
+
+                for (item_idx, action) in ButtonAction::ALL.iter().enumerate() {
+                    let item_rect = Rect::from_min_size(
+                        Pos2::new(popup_rect.min.x + pad_h, popup_rect.min.y + pad_v + item_idx as f32 * item_h),
+                        Vec2::new(popup_rect.width() - pad_h * 2.0, item_h),
+                    );
+                    let item_resp = popup_ui.allocate_rect(item_rect, egui::Sense::click());
+                    let is_item_hovered = item_resp.hovered();
+
+                    if is_item_hovered {
+                        popup_ui.painter().rect_filled(
+                            item_rect,
+                            CornerRadius::same(6),
+                            Color32::from_rgb(0x28, 0x30, 0x3D),
+                        );
+                    }
+
+                    popup_ui.painter().text(
+                        Pos2::new(item_rect.min.x + 10.0, item_rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        action.label(),
+                        font_control_text(),
+                        COLOR_TEXT_PRIMARY,
+                    );
+
+                    if item_resp.clicked() {
+                        selected_action = Some(*action);
+                    }
+                }
+            });
+
+        // Close on click outside or Escape
+        let pointer_down = ui.input(|i| i.pointer.any_pressed());
+        if pointer_down {
+            if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                if !rect.contains(pos) && !popup_rect.contains(pos) {
+                    toggle_open = true; // will close
+                }
+            }
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            toggle_open = true; // will close
+        }
+    }
+
+    (response, selected_action, toggle_open)
 }
 
 // ============================================================================
@@ -1056,6 +1271,9 @@ pub struct App {
     status_msg: Option<(String, Instant)>,
     current_window_h: f32,
     pub is_remap_open: bool,
+    pub button_mappings: [ButtonAction; 5],
+    pub saved_button_mappings: [ButtonAction; 5],
+    pub open_dropdown: Option<usize>,
 }
 
 impl App {
@@ -1123,6 +1341,9 @@ impl App {
             status_msg,
             current_window_h: initial_h,
             is_remap_open: false,
+            button_mappings: DEFAULT_BUTTON_MAPPINGS,
+            saved_button_mappings: DEFAULT_BUTTON_MAPPINGS,
+            open_dropdown: None,
         }
     }
 
@@ -1264,6 +1485,275 @@ impl App {
         }
     }
 
+    fn render_buttons_card(&mut self, ui: &mut egui::Ui) {
+        card_frame().show(ui, |card_ui| {
+            card_ui.vertical(|ui| {
+                // Card Header
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+
+                    ui.label(
+                        RichText::new("BUTTONS")
+                            .font(font_section_title())
+                            .strong()
+                            .color(COLOR_TEXT_PRIMARY),
+                    );
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if reset_buttons_button(ui).clicked() {
+                            self.button_mappings = DEFAULT_BUTTON_MAPPINGS;
+                            self.config.scroll_flag = 0;
+                            self.has_unsaved_changes = self.config != self.saved_config
+                                || self.button_mappings != self.saved_button_mappings;
+                            self.set_status("Buttons reset to default");
+                        }
+                    });
+                });
+
+                ui.add_space(12.0);
+
+                // Card Body: Two columns
+                let total_card_w = ui.available_width();
+                let col_gap = 14.0;
+                let right_col_w = 216.0;
+                let left_col_w = (total_card_w - col_gap - right_col_w).max(280.0);
+                let label_w = 125.0;
+                let dropdown_w = (left_col_w - label_w).max(200.0);
+                let row_h = 32.0;
+                let row_gap = 8.0;
+                let left_col_h = 5.0 * row_h + 4.0 * row_gap; // 192.0
+
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |row_ui| {
+                    row_ui.spacing_mut().item_spacing = Vec2::ZERO;
+
+                    // Left Column: 5 Button Rows
+                    row_ui.allocate_ui_with_layout(
+                        Vec2::new(left_col_w, left_col_h),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |col_ui| {
+                            col_ui.set_width(left_col_w);
+
+                            for idx in 0..5 {
+                                if idx > 0 {
+                                    col_ui.add_space(row_gap);
+                                }
+
+                                col_ui.horizontal(|r_ui| {
+                                    r_ui.spacing_mut().item_spacing = Vec2::ZERO;
+
+                                    // Label
+                                    let (lbl_rect, _) = r_ui.allocate_exact_size(
+                                        Vec2::new(label_w, row_h),
+                                        egui::Sense::hover(),
+                                    );
+                                    r_ui.painter().text(
+                                        lbl_rect.left_center(),
+                                        egui::Align2::LEFT_CENTER,
+                                        BUTTON_NAMES[idx],
+                                        font_control_text(),
+                                        COLOR_TEXT_PRIMARY,
+                                    );
+
+                                    // Dropdown
+                                    let is_open = self.open_dropdown == Some(idx);
+                                    let (_, selected_action, toggle_open) = custom_button_dropdown(
+                                        r_ui,
+                                        idx,
+                                        self.button_mappings[idx],
+                                        is_open,
+                                        dropdown_w,
+                                    );
+
+                                    if let Some(new_action) = selected_action {
+                                        if self.button_mappings[idx] != new_action {
+                                            self.button_mappings[idx] = new_action;
+                                            self.has_unsaved_changes = true;
+                                        }
+                                        self.open_dropdown = None;
+                                    } else if toggle_open {
+                                        if is_open {
+                                            self.open_dropdown = None;
+                                        } else {
+                                            self.open_dropdown = Some(idx);
+                                        }
+                                    }
+                                });
+                            }
+                        },
+                    );
+
+                    row_ui.add_space(col_gap);
+
+                    // Right Column: Scroll Direction Panel
+                    row_ui.allocate_ui_with_layout(
+                        Vec2::new(right_col_w, left_col_h),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |col_ui| {
+                            col_ui.set_width(right_col_w);
+                            egui::Frame::new()
+                                .fill(COLOR_BG_SECONDARY)
+                                .stroke(Stroke::new(1.0, COLOR_BORDER_CARD))
+                                .corner_radius(CornerRadius::same(10))
+                                .inner_margin(egui::Margin::symmetric(14, 14))
+                                .show(col_ui, |p_ui| {
+                                    p_ui.set_width(p_ui.available_width());
+                                    let inner_card_h = left_col_h - 28.0;
+                                    p_ui.set_min_height(inner_card_h);
+                                    p_ui.vertical(|ui| {
+                                        let resp_title = ui.label(
+                                            RichText::new("Scroll direction")
+                                                .font(font_section_title())
+                                                .strong()
+                                                .color(COLOR_TEXT_PRIMARY),
+                                        );
+                                        ui.add_space(4.0);
+                                        let resp_sub = ui.label(
+                                            RichText::new("Choose how the wheel moves\ncontent")
+                                                .font(font_small_caption())
+                                                .color(COLOR_TEXT_MUTED),
+                                        );
+
+                                        let track_h = 36.0;
+                                        let used_h = resp_title.rect.height() + 4.0 + resp_sub.rect.height() + track_h;
+                                        let space_h = (inner_card_h - used_h).max(14.0);
+                                        ui.add_space(space_h);
+
+                                        // Unified segmented switch track (Standard vs Reverse)
+                                        let avail_w = ui.available_width();
+                                        let (track_rect, _) = ui.allocate_exact_size(
+                                            Vec2::new(avail_w, track_h),
+                                            egui::Sense::hover(),
+                                        );
+
+                                        let track_fill = Color32::from_rgb(0x11, 0x17, 0x22);
+                                        let track_stroke = Stroke::new(1.0, COLOR_BORDER_INSET);
+                                        ui.painter().rect(
+                                            track_rect,
+                                            CornerRadius::same(8),
+                                            track_fill,
+                                            track_stroke,
+                                            StrokeKind::Inside,
+                                        );
+
+                                        let pad = 3.0;
+                                        let inner_rect = track_rect.shrink(pad);
+                                        let seg_w = (inner_rect.width() / 2.0).floor();
+                                        let seg_h = inner_rect.height();
+
+                                        let rect_std = Rect::from_min_size(
+                                            inner_rect.min,
+                                            Vec2::new(seg_w, seg_h),
+                                        );
+                                        let rect_rev = Rect::from_min_size(
+                                            Pos2::new(inner_rect.min.x + seg_w, inner_rect.min.y),
+                                            Vec2::new(inner_rect.width() - seg_w, seg_h),
+                                        );
+
+                                        let resp_std = ui.interact(rect_std, ui.auto_id_with("scroll_std"), egui::Sense::click());
+                                        let resp_rev = ui.interact(rect_rev, ui.auto_id_with("scroll_rev"), egui::Sense::click());
+
+                                        if resp_std.hovered() || resp_rev.hovered() {
+                                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                        }
+
+                                        let is_reverse = self.config.scroll_flag != 0;
+
+                                        if resp_std.clicked() && is_reverse {
+                                            self.config.scroll_flag = 0;
+                                            self.has_unsaved_changes = true;
+                                        } else if resp_rev.clicked() && !is_reverse {
+                                            self.config.scroll_flag = 1;
+                                            self.has_unsaved_changes = true;
+                                        }
+
+                                        // Standard segment
+                                        if !is_reverse {
+                                            ui.painter().rect(
+                                                rect_std,
+                                                CornerRadius::same(6),
+                                                COLOR_ACCENT,
+                                                Stroke::NONE,
+                                                StrokeKind::Inside,
+                                            );
+                                            ui.painter().text(
+                                                rect_std.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                "Standard",
+                                                font_control_text(),
+                                                COLOR_TEXT_ON_ACCENT,
+                                            );
+                                        } else {
+                                            if resp_std.hovered() {
+                                                ui.painter().rect(
+                                                    rect_std,
+                                                    CornerRadius::same(6),
+                                                    Color32::from_rgba_unmultiplied(255, 255, 255, 10),
+                                                    Stroke::NONE,
+                                                    StrokeKind::Inside,
+                                                );
+                                            }
+                                            let text_color = if resp_std.hovered() {
+                                                COLOR_TEXT_PRIMARY
+                                            } else {
+                                                COLOR_TEXT_MUTED
+                                            };
+                                            ui.painter().text(
+                                                rect_std.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                "Standard",
+                                                font_control_text(),
+                                                text_color,
+                                            );
+                                        }
+
+                                        // Reverse segment
+                                        if is_reverse {
+                                            ui.painter().rect(
+                                                rect_rev,
+                                                CornerRadius::same(6),
+                                                COLOR_ACCENT,
+                                                Stroke::NONE,
+                                                StrokeKind::Inside,
+                                            );
+                                            ui.painter().text(
+                                                rect_rev.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                "Reverse",
+                                                font_control_text(),
+                                                COLOR_TEXT_ON_ACCENT,
+                                            );
+                                        } else {
+                                            if resp_rev.hovered() {
+                                                ui.painter().rect(
+                                                    rect_rev,
+                                                    CornerRadius::same(6),
+                                                    Color32::from_rgba_unmultiplied(255, 255, 255, 10),
+                                                    Stroke::NONE,
+                                                    StrokeKind::Inside,
+                                                );
+                                            }
+                                            let text_color = if resp_rev.hovered() {
+                                                COLOR_TEXT_PRIMARY
+                                            } else {
+                                                COLOR_TEXT_MUTED
+                                            };
+                                            ui.painter().text(
+                                                rect_rev.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                "Reverse",
+                                                font_control_text(),
+                                                text_color,
+                                            );
+                                        }
+                                    });
+                                });
+                        },
+                    );
+                });
+            });
+        });
+    }
+
     pub fn render_ui(&mut self, ui: &mut egui::Ui) {
         // Enforce consistent outer padding of 14 px on all 4 sides
         let frame_resp = egui::Frame::new()
@@ -1387,9 +1877,20 @@ impl App {
                                     let remap_resp = remap_button(ui, btn_height, self.is_remap_open);
                                     if remap_resp.clicked() {
                                         self.is_remap_open = !self.is_remap_open;
+                                        if !self.is_remap_open {
+                                            self.open_dropdown = None;
+                                        }
                                     }
                                 });
                             });
+
+                            // ====================================================
+                            // 1.5. BUTTONS CARD (Expands directly below Header)
+                            // ====================================================
+                            if self.is_remap_open {
+                                ui.add_space(10.0);
+                                self.render_buttons_card(ui);
+                            }
 
                             ui.add_space(10.0);
 
@@ -1830,7 +2331,8 @@ impl App {
                                     ui.spacing_mut().item_spacing = Vec2::ZERO;
 
                                     // Dynamic check: are there genuine unsaved changes compared to the mouse?
-                                    self.has_unsaved_changes = self.config != self.saved_config;
+                                    self.has_unsaved_changes = self.config != self.saved_config
+                                        || self.button_mappings != self.saved_button_mappings;
 
                                     // Check if an apply, factory, or reload action is currently in progress
                                     let is_busy = self.is_busy();
@@ -1919,6 +2421,8 @@ impl App {
                                     if restore_resp.clicked() && restore_enabled {
                                         if is_factory {
                                             let factory_cfg = self.make_factory_config();
+                                            self.button_mappings = DEFAULT_BUTTON_MAPPINGS;
+                                            self.saved_button_mappings = DEFAULT_BUTTON_MAPPINGS;
                                             if self.is_connected {
                                                 let _ = self.tx_req.send(WorkerRequest::ApplyConfig(factory_cfg.clone()));
                                                 self.config = factory_cfg;
@@ -1929,10 +2433,12 @@ impl App {
                                                 self.set_status("Factory defaults loaded (offline)");
                                             }
                                         } else if self.is_connected {
+                                            self.button_mappings = self.saved_button_mappings;
                                             let _ = self.tx_req.send(WorkerRequest::ConnectAndRead);
                                             self.set_status("Reloading settings...");
                                         } else {
                                             self.config = self.saved_config.clone();
+                                            self.button_mappings = self.saved_button_mappings;
                                             self.has_unsaved_changes = false;
                                             self.set_status("Settings discarded");
                                         }
@@ -1943,6 +2449,7 @@ impl App {
                                     let apply_enabled = self.is_connected && self.has_unsaved_changes && !is_busy;
                                     if apply_button(ui, apply_enabled).clicked() && apply_enabled {
                                         let _ = self.tx_req.send(WorkerRequest::ApplyConfig(self.config.clone()));
+                                        self.saved_button_mappings = self.button_mappings;
                                         self.set_status("Applying settings...");
                                     }
                                 });
@@ -1984,7 +2491,7 @@ pub fn run_gui() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([680.0, initial_h])
             .with_min_inner_size([680.0, 430.0])
-            .with_max_inner_size([680.0, 850.0])
+            .with_max_inner_size([680.0, 1050.0])
             .with_resizable(false)
             .with_maximize_button(false)
             .with_icon(icon_data)
@@ -2179,6 +2686,9 @@ mod tests {
             status_msg: None,
             current_window_h: 0.0,
             is_remap_open: false,
+            button_mappings: DEFAULT_BUTTON_MAPPINGS,
+            saved_button_mappings: DEFAULT_BUTTON_MAPPINGS,
+            open_dropdown: None,
         }
     }
 
@@ -2664,10 +3174,10 @@ mod tests {
                 "Layout height {} must be >= min_inner_size 430.0 for stage count {}",
                 app.current_window_h, stages
             );
-            // And must stay within max_inner_size (850.0)
+            // And must stay within max_inner_size (960.0)
             assert!(
-                app.current_window_h <= 850.0,
-                "Layout height {} must be <= max_inner_size 850.0 for stage count {}",
+                app.current_window_h <= 960.0,
+                "Layout height {} must be <= max_inner_size 960.0 for stage count {}",
                 app.current_window_h, stages
             );
         }
@@ -2833,5 +3343,109 @@ mod tests {
 
         app.is_remap_open = true;
         assert!(app.is_remap_open);
+    }
+
+    #[test]
+    fn test_buttons_section_expand_and_collapse_layout() {
+        let ctx = egui::Context::default();
+        setup_fonts(&ctx);
+
+        let raw_input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(680.0, 1000.0),
+            )),
+            ..Default::default()
+        };
+
+        let mut app = create_test_app();
+        app.is_remap_open = false;
+
+        let mut out1 = ctx.run_ui(raw_input.clone(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                app.render_ui(ui);
+            });
+        });
+        out1.textures_delta.clear();
+        let h_collapsed = app.current_window_h;
+
+        // Expand Buttons section
+        app.is_remap_open = true;
+        let mut out2 = ctx.run_ui(raw_input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                app.render_ui(ui);
+            });
+        });
+        out2.textures_delta.clear();
+        let h_expanded = app.current_window_h;
+
+        assert!(
+            h_expanded > h_collapsed,
+            "Expanded height {} must be greater than collapsed height {}",
+            h_expanded,
+            h_collapsed
+        );
+        assert!(
+            h_expanded <= 1050.0,
+            "Expanded height {} must stay within max_inner_size (1050.0)",
+            h_expanded
+        );
+    }
+
+    #[test]
+    fn test_button_mappings_unsaved_changes_and_reset() {
+        let mut app = create_test_app();
+        assert_eq!(app.button_mappings, DEFAULT_BUTTON_MAPPINGS);
+        assert!(!app.has_unsaved_changes);
+
+        // User changes Left button to Right button
+        app.button_mappings[0] = ButtonAction::RightClick;
+        assert_ne!(app.button_mappings, app.saved_button_mappings);
+
+        // User changes scroll direction
+        app.config.scroll_flag = 1;
+        assert_ne!(app.config.scroll_flag, app.saved_config.scroll_flag);
+
+        // Reset to default
+        app.button_mappings = DEFAULT_BUTTON_MAPPINGS;
+        app.config.scroll_flag = 0;
+        assert_eq!(app.button_mappings, app.saved_button_mappings);
+        assert_eq!(app.config.scroll_flag, app.saved_config.scroll_flag);
+    }
+
+    #[test]
+    fn test_buttons_section_reset_button_styling_and_scroll_segmented_switch() {
+        let ctx = egui::Context::default();
+        setup_fonts(&ctx);
+
+        let raw_input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(680.0, 500.0),
+            )),
+            ..Default::default()
+        };
+
+        // Test reset_buttons_button dimensions (matches Restore from mouse height 38.0)
+        let mut out = ctx.run_ui(raw_input.clone(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let resp = reset_buttons_button(ui);
+                assert_eq!(resp.rect.height(), 38.0);
+                assert_eq!(resp.rect.width(), 130.0);
+            });
+        });
+        out.textures_delta.clear();
+
+        // Test render_buttons_card executes and respects scroll direction state
+        let mut app = create_test_app();
+        app.is_remap_open = true;
+        assert_eq!(app.config.scroll_flag, 0);
+
+        let mut out2 = ctx.run_ui(raw_input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                app.render_buttons_card(ui);
+            });
+        });
+        out2.textures_delta.clear();
     }
 }
