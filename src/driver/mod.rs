@@ -477,7 +477,7 @@ impl MchoseMouse {
                 let dpi_stages_count = (resp[11] as usize).clamp(1, 6);
                 let active_dpi_stage = (resp[12] as usize).clamp(1, dpi_stages_count);
 
-                let mut dpi_stages = [800, 1600, 2400, 3200, 5000, 12000];
+                let mut dpi_stages = [400, 800, 1600, 3200, 6400, 12000];
                 for i in 0..6 {
                     let offset = 13 + i * 2;
                     let val = (resp[offset] as u16) | ((resp[offset + 1] as u16) << 8);

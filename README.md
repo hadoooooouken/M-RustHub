@@ -45,6 +45,7 @@ Simply run or double-click `m_rusthub.exe`:
 
 Features available in GUI:
 - **Live Battery Indicator** (Percentage & Charging status)
+- **Button Remapping**: Expandable **Remap** drawer to reassign all 5 physical buttons (Left, Right, Middle, Forward, Backward) with dedicated actions, adjust scroll direction, and reset to defaults
 - **Number of Levels selector (1 to 6)** — customize exactly how many DPI stages are active
 - **DPI customizer** (100 – 12,000 DPI) with interactive sliders and quick ±100 buttons
 - **Polling Rate selector** (125 Hz, 250 Hz, 500 Hz, 1000 Hz)
@@ -52,6 +53,14 @@ Features available in GUI:
 - **Wireless Sleep Timeout**: 0 min – 100 min (0 = Never sleep)
 - **Instant Save to Flash** (Hardware memory)
 - **Factory Reset**: Hold <kbd>Shift</kbd> while hovering over the **Restore from mouse** button to reveal **Factory reset**
+
+<p align="center">
+  <img src="screenshots/mrusthub-buttons_remap.webp" alt="M-RustHub - Mouse button remapping and scroll direction settings" />
+</p>
+
+<p align="center">
+  <img src="screenshots/mrusthub-dpi_stages.webp" alt="M-RustHub - DPI levels and stage customizer" />
+</p>
 
 ---
 
@@ -99,6 +108,21 @@ Features available in GUI:
 .\m_rusthub.exe set-sleep 0
 ```
 
+#### Remap mouse buttons:
+```powershell
+# Syntax: set-button <1-5> <action>
+# Buttons: 1 = Left, 2 = Right, 3 = Middle, 4 = Forward, 5 = Backward
+# Actions: left, right, middle, forward, backward
+
+# Swap Forward and Backward buttons:
+.\m_rusthub.exe set-button 4 backward
+.\m_rusthub.exe set-button 5 forward
+
+# Swap Left and Right click buttons:
+.\m_rusthub.exe set-button 1 right
+.\m_rusthub.exe set-button 2 left
+```
+
 ---
 
 ## 🛠️ Building Clean Release
@@ -121,3 +145,9 @@ The clean standalone executable will be placed directly in:
 ## 📄 License
 
 This project is open-source and available under the [MIT License](LICENSE).
+
+---
+
+## ⚠️ Disclaimer
+
+This software is provided "as is", without warranty of any kind, express or implied. The author and contributors assume no liability for any direct, indirect, incidental, or consequential damages, hardware malfunction, or loss of data resulting from the use of this tool. Use at your own risk.
