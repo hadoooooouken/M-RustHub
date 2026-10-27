@@ -103,6 +103,8 @@ pub enum ButtonAction {
     MiddleClick,
     Forward,
     Backward,
+    Disabled,
+    Custom([u8; 4]),
 }
 
 impl ButtonAction {
@@ -121,6 +123,8 @@ impl ButtonAction {
             ButtonAction::MiddleClick => "Middle button",
             ButtonAction::Forward => "Forward button",
             ButtonAction::Backward => "Backward button",
+            ButtonAction::Disabled => "Disabled",
+            ButtonAction::Custom(_) => "Custom",
         }
     }
 
@@ -133,10 +137,16 @@ impl ButtonAction {
             ButtonAction::MiddleClick => 0x000004,
             ButtonAction::Forward => 0x000010,
             ButtonAction::Backward => 0x000008,
+            ButtonAction::Disabled => 0xFF0000,
+            ButtonAction::Custom(raw) => {
+                ((raw[0] as u32) << 24)
+                    | ((raw[1] as u32) << 16)
+                    | ((raw[2] as u32) << 8)
+                    | (raw[3] as u32)
+            }
         }
     }
 
-    /// Encoded 3-byte action payload bytes as defined in Section 7.1
     /// Encoded 4-byte action payload bytes as defined by G3 V2 controller specification
     pub fn to_payload_bytes(&self) -> [u8; 4] {
         match self {
@@ -145,27 +155,21 @@ impl ButtonAction {
             ButtonAction::MiddleClick => [0x20, 0x04, 0x00, 0x00],
             ButtonAction::Backward => [0x20, 0x08, 0x00, 0x00],
             ButtonAction::Forward => [0x20, 0x10, 0x00, 0x00],
+            ButtonAction::Disabled => [0xFF, 0x00, 0x00, 0x00],
+            ButtonAction::Custom(raw) => *raw,
         }
     }
 
     pub fn from_payload_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() >= 4 && bytes[0] == 0x20 {
-            match bytes[1] {
-                0x01 => Some(ButtonAction::LeftClick),
-                0x02 => Some(ButtonAction::RightClick),
-                0x04 => Some(ButtonAction::MiddleClick),
-                0x08 => Some(ButtonAction::Backward),
-                0x10 => Some(ButtonAction::Forward),
-                _ => None,
-            }
-        } else if bytes.len() >= 3 && bytes[0] == 0x00 {
-            match bytes[1] {
-                0x01 => Some(ButtonAction::LeftClick),
-                0x02 => Some(ButtonAction::RightClick),
-                0x04 => Some(ButtonAction::MiddleClick),
-                0x08 => Some(ButtonAction::Backward),
-                0x10 => Some(ButtonAction::Forward),
-                _ => None,
+        if bytes.len() >= 4 {
+            match (bytes[0], bytes[1], bytes[2], bytes[3]) {
+                (0x20, 0x01, 0x00, 0x00) => Some(ButtonAction::LeftClick),
+                (0x20, 0x02, 0x00, 0x00) => Some(ButtonAction::RightClick),
+                (0x20, 0x04, 0x00, 0x00) => Some(ButtonAction::MiddleClick),
+                (0x20, 0x08, 0x00, 0x00) => Some(ButtonAction::Backward),
+                (0x20, 0x10, 0x00, 0x00) => Some(ButtonAction::Forward),
+                (0xFF, 0x00, 0x00, 0x00) => Some(ButtonAction::Disabled),
+                (b0, b1, b2, b3) => Some(ButtonAction::Custom([b0, b1, b2, b3])),
             }
         } else {
             None
@@ -179,6 +183,7 @@ impl ButtonAction {
             "middle" | "middleclick" | "mmb" | "middle button" => Some(ButtonAction::MiddleClick),
             "forward" | "mouse5" | "forward button" => Some(ButtonAction::Forward),
             "backward" | "back" | "mouse4" | "backward button" => Some(ButtonAction::Backward),
+            "disabled" | "disable" | "none" | "off" => Some(ButtonAction::Disabled),
             _ => None,
         }
     }
@@ -715,7 +720,7 @@ impl MchoseMouse {
                 continue;
             }
             if self.read_response(9, 200).is_ok() {
-                std::thread::sleep(std::time::Duration::from_millis(30));
+                std::thread::sleep(std::time::Duration::from_millis(250));
                 return Ok(());
             }
         }
@@ -825,6 +830,7 @@ mod tests {
         assert_eq!(ButtonAction::from_str_name("forward"), Some(ButtonAction::Forward));
         assert_eq!(ButtonAction::from_str_name("backward"), Some(ButtonAction::Backward));
         assert_eq!(ButtonAction::from_str_name("back"), Some(ButtonAction::Backward));
+        assert_eq!(ButtonAction::from_str_name("disabled"), Some(ButtonAction::Disabled));
         assert_eq!(ButtonAction::from_str_name("invalid"), None);
 
         for action in ButtonAction::ALL {
@@ -832,5 +838,13 @@ mod tests {
             assert_eq!(ButtonAction::from_payload_bytes(&bytes), Some(action));
             assert!(action.action_code() > 0);
         }
+
+        let disabled = ButtonAction::Disabled;
+        assert_eq!(ButtonAction::from_payload_bytes(&disabled.to_payload_bytes()), Some(disabled));
+        assert_eq!(disabled.label(), "Disabled");
+
+        let custom = ButtonAction::Custom([0x21, 0x04, 0x00, 0x00]);
+        assert_eq!(ButtonAction::from_payload_bytes(&custom.to_payload_bytes()), Some(custom));
+        assert_eq!(custom.label(), "Custom");
     }
 }

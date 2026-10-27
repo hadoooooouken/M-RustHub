@@ -906,7 +906,7 @@ fn custom_button_dropdown(
 // ============================================================================
 enum WorkerRequest {
     ConnectAndRead,
-    ApplyConfig(MouseConfig, [ButtonAction; 5]),
+    ApplyConfig(MouseConfig, Option<[ButtonAction; 5]>),
 }
 
 enum WorkerResponse {
@@ -929,7 +929,7 @@ enum WorkerResponse {
     DpiStageChanged(usize),
     ApplySuccess {
         config: MouseConfig,
-        button_mappings: [ButtonAction; 5],
+        button_mappings: Option<[ButtonAction; 5]>,
     },
     ApplyError(String),
     Disconnected(String),
@@ -1082,10 +1082,9 @@ fn start_worker(
                             let _ = tx_resp.send(WorkerResponse::Disconnected("Mouse offline".into()));
                         } else {
                             let cfg_res = m.set_config(&cfg);
-                            let btns_res = if cfg_res.is_ok() {
-                                m.set_button_mappings(&btn_mappings)
-                            } else {
-                                Ok(())
+                            let btns_res = match (&cfg_res, btn_mappings) {
+                                (Ok(_), Some(btns)) => m.set_button_mappings(&btns),
+                                _ => Ok(()),
                             };
 
                             match (cfg_res, btns_res) {
@@ -1441,7 +1440,9 @@ impl App {
                 button_mappings: saved_btns,
             } => {
                 self.saved_config = saved_cfg;
-                self.saved_button_mappings = saved_btns;
+                if let Some(btns) = saved_btns {
+                    self.saved_button_mappings = btns;
+                }
                 self.has_unsaved_changes = self.config != self.saved_config
                     || self.button_mappings != self.saved_button_mappings;
                 if let Some((ref msg, _)) = self.status_msg {
@@ -2154,20 +2155,20 @@ impl App {
                                                     .show(ui, |ui| {
                                                         ui.set_width(ui.available_width());
                                                         let rates = [
-                                                            (PollingRate::Hz125, "125 Hz"),
-                                                            (PollingRate::Hz250, "250 Hz"),
-                                                            (PollingRate::Hz500, "500 Hz"),
-                                                            (PollingRate::Hz1000, "1000 Hz"),
+                                                            (PollingRate::Hz125, "125"),
+                                                            (PollingRate::Hz250, "250"),
+                                                            (PollingRate::Hz500, "500"),
+                                                            (PollingRate::Hz1000, "1000"),
                                                         ];
                                                         let avail_w = ui.available_width();
                                                         let seg_w = (avail_w / 4.0).floor();
 
                                                         ui.horizontal(|ui| {
                                                             ui.spacing_mut().item_spacing = Vec2::ZERO;
-                                                            for (rate, label) in rates {
+                                                            for (rate, val_str) in rates {
                                                                 let is_selected = self.config.report_rate == rate;
                                                                 let (rect, resp) = ui.allocate_exact_size(
-                                                                    Vec2::new(seg_w, 32.0),
+                                                                    Vec2::new(seg_w, 52.0),
                                                                     egui::Sense::click(),
                                                                 );
                                                                 if resp.clicked() && !is_selected {
@@ -2175,31 +2176,32 @@ impl App {
                                                                     self.has_unsaved_changes = true;
                                                                 }
 
-                                                                if is_selected {
+                                                                let text_color = if is_selected {
                                                                     let glow = rect.expand(2.0);
                                                                     ui.painter().rect_filled(glow, CornerRadius::same(7), COLOR_ACCENT_GLOW);
                                                                     ui.painter().rect(rect, CornerRadius::same(6), COLOR_ACCENT, Stroke::NONE, StrokeKind::Inside);
-                                                                    ui.painter().text(
-                                                                        rect.center(),
-                                                                        egui::Align2::CENTER_CENTER,
-                                                                        label,
-                                                                        egui::FontId::new(12.0, egui::FontFamily::Proportional),
-                                                                        COLOR_TEXT_ON_ACCENT,
-                                                                    );
+                                                                    COLOR_TEXT_ON_ACCENT
+                                                                } else if resp.hovered() {
+                                                                    COLOR_TEXT_PRIMARY
                                                                 } else {
-                                                                    let text_color = if resp.hovered() {
-                                                                        COLOR_TEXT_PRIMARY
-                                                                    } else {
-                                                                        COLOR_TEXT_MUTED
-                                                                    };
-                                                                    ui.painter().text(
-                                                                        rect.center(),
-                                                                        egui::Align2::CENTER_CENTER,
-                                                                        label,
-                                                                        egui::FontId::new(12.0, egui::FontFamily::Proportional),
-                                                                        text_color,
-                                                                    );
-                                                                }
+                                                                    COLOR_TEXT_MUTED
+                                                                };
+
+                                                                let font = egui::FontId::new(12.0, egui::FontFamily::Proportional);
+                                                                ui.painter().text(
+                                                                    Pos2::new(rect.center().x, rect.center().y - 9.0),
+                                                                    egui::Align2::CENTER_CENTER,
+                                                                    val_str,
+                                                                    font.clone(),
+                                                                    text_color,
+                                                                );
+                                                                ui.painter().text(
+                                                                    Pos2::new(rect.center().x, rect.center().y + 9.0),
+                                                                    egui::Align2::CENTER_CENTER,
+                                                                    "Hz",
+                                                                    font,
+                                                                    text_color,
+                                                                );
                                                             }
                                                         });
                                                     });
@@ -2425,7 +2427,7 @@ impl App {
                                             if self.is_connected {
                                                 let _ = self.tx_req.send(WorkerRequest::ApplyConfig(
                                                     factory_cfg.clone(),
-                                                    DEFAULT_BUTTON_MAPPINGS,
+                                                    Some(DEFAULT_BUTTON_MAPPINGS),
                                                 ));
                                                 self.config = factory_cfg;
                                                 self.set_status("Applying factory defaults...");
@@ -2451,9 +2453,11 @@ impl App {
 
                                     let apply_enabled = self.is_connected && self.has_unsaved_changes && !is_busy;
                                     if apply_button(ui, apply_enabled).clicked() && apply_enabled {
+                                        let btns_to_apply = (self.button_mappings != self.saved_button_mappings)
+                                            .then_some(self.button_mappings);
                                         let _ = self.tx_req.send(WorkerRequest::ApplyConfig(
                                             self.config.clone(),
-                                            self.button_mappings,
+                                            btns_to_apply,
                                         ));
                                         self.set_status("Applying settings...");
                                     }
@@ -3244,7 +3248,7 @@ mod tests {
         // Worker reports success with sent_cfg
         app.on_worker_response(WorkerResponse::ApplySuccess {
             config: sent_cfg.clone(),
-            button_mappings: DEFAULT_BUTTON_MAPPINGS,
+            button_mappings: Some(DEFAULT_BUTTON_MAPPINGS),
         });
 
         // saved_config must record what was actually written to mouse (4), NOT current config (12)
@@ -3264,7 +3268,7 @@ mod tests {
 
         app.on_worker_response(WorkerResponse::ApplySuccess {
             config: sent_cfg.clone(),
-            button_mappings: DEFAULT_BUTTON_MAPPINGS,
+            button_mappings: Some(DEFAULT_BUTTON_MAPPINGS),
         });
 
         assert_eq!(app.saved_config.debounce_ms, 4);
@@ -3284,9 +3288,33 @@ mod tests {
 
         app.on_worker_response(WorkerResponse::ApplySuccess {
             config: app.config.clone(),
-            button_mappings: custom_btns,
+            button_mappings: Some(custom_btns),
         });
 
+        assert_eq!(app.saved_button_mappings, custom_btns);
+        assert_eq!(app.button_mappings, custom_btns);
+        assert!(!app.has_unsaved_changes);
+    }
+
+    #[test]
+    fn test_apply_success_when_button_mappings_none() {
+        let mut app = create_test_app();
+        let mut custom_btns = DEFAULT_BUTTON_MAPPINGS;
+        custom_btns[3] = ButtonAction::Disabled;
+        custom_btns[4] = ButtonAction::Custom([0x21, 0x04, 0x00, 0x00]);
+        app.saved_button_mappings = custom_btns;
+        app.button_mappings = custom_btns;
+
+        // Change only config (e.g. debounce)
+        app.config.debounce_ms = 16;
+        app.has_unsaved_changes = true;
+
+        app.on_worker_response(WorkerResponse::ApplySuccess {
+            config: app.config.clone(),
+            button_mappings: None,
+        });
+
+        assert_eq!(app.saved_config.debounce_ms, 16);
         assert_eq!(app.saved_button_mappings, custom_btns);
         assert_eq!(app.button_mappings, custom_btns);
         assert!(!app.has_unsaved_changes);
@@ -3486,5 +3514,31 @@ mod tests {
             });
         });
         out2.textures_delta.clear();
+    }
+
+    #[test]
+    fn test_polling_rate_section_render() {
+        let ctx = egui::Context::default();
+        setup_fonts(&ctx);
+
+        let raw_input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(680.0, 700.0),
+            )),
+            ..Default::default()
+        };
+
+        let mut app = create_test_app();
+        app.config.report_rate = PollingRate::Hz500;
+
+        let mut out = ctx.run_ui(raw_input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                app.render_ui(ui);
+            });
+        });
+        out.textures_delta.clear();
+
+        assert_eq!(app.config.report_rate, PollingRate::Hz500);
     }
 }
