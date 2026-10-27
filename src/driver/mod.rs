@@ -96,6 +96,101 @@ impl fmt::Display for Lod {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ButtonAction {
+    LeftClick,
+    RightClick,
+    MiddleClick,
+    Forward,
+    Backward,
+}
+
+impl ButtonAction {
+    pub const ALL: [ButtonAction; 5] = [
+        ButtonAction::LeftClick,
+        ButtonAction::RightClick,
+        ButtonAction::MiddleClick,
+        ButtonAction::Forward,
+        ButtonAction::Backward,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            ButtonAction::LeftClick => "Left button",
+            ButtonAction::RightClick => "Right button",
+            ButtonAction::MiddleClick => "Middle button",
+            ButtonAction::Forward => "Forward button",
+            ButtonAction::Backward => "Backward button",
+        }
+    }
+
+    /// Internal 24-bit action code as defined in protocol specification (Section 4 & 7)
+    #[allow(dead_code)]
+    pub fn action_code(&self) -> u32 {
+        match self {
+            ButtonAction::LeftClick => 0x000001,
+            ButtonAction::RightClick => 0x000002,
+            ButtonAction::MiddleClick => 0x000004,
+            ButtonAction::Forward => 0x000010,
+            ButtonAction::Backward => 0x000008,
+        }
+    }
+
+    /// Encoded 3-byte action payload bytes as defined in Section 7.1
+    pub fn to_payload_bytes(&self) -> [u8; 3] {
+        match self {
+            ButtonAction::LeftClick => [0x00, 0x01, 0x00],
+            ButtonAction::RightClick => [0x00, 0x02, 0x00],
+            ButtonAction::MiddleClick => [0x00, 0x04, 0x00],
+            ButtonAction::Backward => [0x00, 0x08, 0x00],
+            ButtonAction::Forward => [0x00, 0x10, 0x00],
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn from_payload_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() >= 3 && bytes[0] == 0x00 {
+            match bytes[1] {
+                0x01 => Some(ButtonAction::LeftClick),
+                0x02 => Some(ButtonAction::RightClick),
+                0x04 => Some(ButtonAction::MiddleClick),
+                0x08 => Some(ButtonAction::Backward),
+                0x10 => Some(ButtonAction::Forward),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn from_str_name(name: &str) -> Option<Self> {
+        match name.to_ascii_lowercase().trim() {
+            "left" | "leftclick" | "lmb" | "left button" => Some(ButtonAction::LeftClick),
+            "right" | "rightclick" | "rmb" | "right button" => Some(ButtonAction::RightClick),
+            "middle" | "middleclick" | "mmb" | "middle button" => Some(ButtonAction::MiddleClick),
+            "forward" | "mouse5" | "forward button" => Some(ButtonAction::Forward),
+            "backward" | "back" | "mouse4" | "backward button" => Some(ButtonAction::Backward),
+            _ => None,
+        }
+    }
+}
+
+pub const DEFAULT_BUTTON_MAPPINGS: [ButtonAction; 5] = [
+    ButtonAction::LeftClick,
+    ButtonAction::RightClick,
+    ButtonAction::MiddleClick,
+    ButtonAction::Forward,
+    ButtonAction::Backward,
+];
+
+pub const BUTTON_NAMES: [&str; 5] = [
+    "Left button",
+    "Right button",
+    "Middle button",
+    "Forward button",
+    "Backward button",
+];
+
 #[derive(Debug, Clone)]
 pub struct BatteryStatus {
     pub percent: u8,
@@ -514,11 +609,108 @@ impl MchoseMouse {
         cfg.sleep_minutes = minutes.clamp(0, 100);
         self.set_config(&cfg)
     }
+
+    /// Builds a 65-byte USB HID Set Keymap packet following M-Protocol specification
+    pub fn build_set_button_packet(profile_index: u8, key_index: u8, action: ButtonAction) -> [u8; 65] {
+        let mut pkt = [0u8; 65];
+        pkt[0] = 0x4D; // Report ID 77
+        pkt[1] = 0x01; // Protocol Version
+        pkt[2] = 0x01; // Flags
+        pkt[3] = 0x06; // Length N = 6
+        pkt[4] = 0x01; // Cmd Low (0x0101 Set Keymap)
+        pkt[5] = 0x01; // Cmd High
+        pkt[6] = 0x00; // BizCode
+        pkt[7] = 0x00; // Sequence
+        pkt[8] = profile_index; // 0
+        pkt[9] = key_index;    // 0..4 (LMB, RMB, MMB, Forward, Back)
+        pkt[10] = 0x0B;        // writeControl: (1 << 3) | 3
+        let act_bytes = action.to_payload_bytes();
+        pkt[11] = act_bytes[0];
+        pkt[12] = act_bytes[1];
+        pkt[13] = act_bytes[2];
+
+        // Checksum: XOR from index 2 to index 13
+        let mut csum = 0u8;
+        for i in 2..=13 {
+            csum ^= pkt[i];
+        }
+        pkt[14] = csum;
+
+        pkt
+    }
+
+    /// Sets the hardware mapping for a single button (0..=4)
+    pub fn set_button_mapping(&self, key_index: u8, action: ButtonAction) -> Result<(), DriverError> {
+        if key_index > 4 {
+            return Err(DriverError::Protocol(format!("Invalid keyIndex {key_index}, expected 0..=4")));
+        }
+        let pkt = Self::build_set_button_packet(0, key_index, action);
+        self.flush_input();
+        self.device.write(&pkt)?;
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        Ok(())
+    }
+
+    /// Writes all 5 button mappings to the mouse microcontroller flash memory
+    pub fn set_button_mappings(&self, mappings: &[ButtonAction; 5]) -> Result<(), DriverError> {
+        if !self.get_online_status()? {
+            return Err(DriverError::Protocol("Mouse is offline or sleeping".to_string()));
+        }
+        for (idx, action) in mappings.iter().enumerate() {
+            self.set_button_mapping(idx as u8, *action)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_build_set_button_packet_checksums() {
+        // Factory defaults:
+        let p0 = MchoseMouse::build_set_button_packet(0, 0, ButtonAction::LeftClick);
+        assert_eq!(p0[0], 0x4D);
+        assert_eq!(p0[9], 0);
+        assert_eq!(p0[14], 0x0D);
+
+        let p1 = MchoseMouse::build_set_button_packet(0, 1, ButtonAction::RightClick);
+        assert_eq!(p1[9], 1);
+        assert_eq!(p1[14], 0x0F);
+
+        let p2 = MchoseMouse::build_set_button_packet(0, 2, ButtonAction::MiddleClick);
+        assert_eq!(p2[9], 2);
+        assert_eq!(p2[14], 0x0A);
+
+        let p3 = MchoseMouse::build_set_button_packet(0, 3, ButtonAction::Forward);
+        assert_eq!(p3[9], 3);
+        assert_eq!(p3[14], 0x1F);
+
+        let p4 = MchoseMouse::build_set_button_packet(0, 4, ButtonAction::Backward);
+        assert_eq!(p4[9], 4);
+        assert_eq!(p4[14], 0x00);
+
+        // Section 8 example from docs/protocol_buttons.md: Forward (key 3) mapped to Ctrl+C ([13, 01, 06])
+        let mut pkt_sec8 = [0u8; 65];
+        pkt_sec8[0] = 0x4D;
+        pkt_sec8[1] = 0x01;
+        pkt_sec8[2] = 0x01;
+        pkt_sec8[3] = 0x06;
+        pkt_sec8[4] = 0x01;
+        pkt_sec8[5] = 0x01;
+        pkt_sec8[6] = 0x00;
+        pkt_sec8[7] = 0x00;
+        pkt_sec8[8] = 0x00;
+        pkt_sec8[9] = 0x03;
+        pkt_sec8[10] = 0x0B;
+        pkt_sec8[11] = 0x13;
+        pkt_sec8[12] = 0x01;
+        pkt_sec8[13] = 0x06;
+        let mut csum = 0u8;
+        for i in 2..=13 { csum ^= pkt_sec8[i]; }
+        assert_eq!(csum, 0x1B);
+    }
 
     #[test]
     fn test_build_config_packet_normalizes_dpi_stages() {
@@ -558,5 +750,23 @@ mod tests {
         assert_eq!(def.scroll_flag, 0);
         assert_eq!(def.highspeed_mode, 0);
         assert_eq!(def.sensor_angle, 0);
+    }
+
+    #[test]
+    fn test_button_action_conversions() {
+        assert_eq!(ButtonAction::from_str_name("left"), Some(ButtonAction::LeftClick));
+        assert_eq!(ButtonAction::from_str_name("LMB"), Some(ButtonAction::LeftClick));
+        assert_eq!(ButtonAction::from_str_name("Right"), Some(ButtonAction::RightClick));
+        assert_eq!(ButtonAction::from_str_name("middle"), Some(ButtonAction::MiddleClick));
+        assert_eq!(ButtonAction::from_str_name("forward"), Some(ButtonAction::Forward));
+        assert_eq!(ButtonAction::from_str_name("backward"), Some(ButtonAction::Backward));
+        assert_eq!(ButtonAction::from_str_name("back"), Some(ButtonAction::Backward));
+        assert_eq!(ButtonAction::from_str_name("invalid"), None);
+
+        for action in ButtonAction::ALL {
+            let bytes = action.to_payload_bytes();
+            assert_eq!(ButtonAction::from_payload_bytes(&bytes), Some(action));
+            assert!(action.action_code() > 0);
+        }
     }
 }

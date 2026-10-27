@@ -77,6 +77,16 @@ pub enum Commands {
         minutes: u8,
     },
 
+    /// Remap mouse button action (1: Left, 2: Right, 3: Middle, 4: Forward, 5: Backward)
+    SetButton {
+        /// Button number (1: Left, 2: Right, 3: Middle, 4: Forward, 5: Backward)
+        #[arg(value_parser = clap::value_parser!(u8).range(1..=5))]
+        button: u8,
+
+        /// Action name (left, right, middle, forward, backward)
+        action: String,
+    },
+
     /// Launch graphical user interface (GUI)
     Gui,
 }
@@ -114,5 +124,21 @@ mod tests {
     fn test_parse_dpi_invalid_string() {
         assert!(parse_dpi("abc").is_err());
         assert!(parse_dpi("").is_err());
+    }
+
+    #[test]
+    fn test_set_button_cli_parse() {
+        let args = Cli::try_parse_from(["m_rusthub", "set-button", "4", "backward"]).unwrap();
+        match args.command {
+            Some(Commands::SetButton { button, action }) => {
+                assert_eq!(button, 4);
+                assert_eq!(action, "backward");
+            }
+            _ => panic!("Expected SetButton command"),
+        }
+
+        // Out of range button index (1..=5)
+        assert!(Cli::try_parse_from(["m_rusthub", "set-button", "0", "left"]).is_err());
+        assert!(Cli::try_parse_from(["m_rusthub", "set-button", "6", "left"]).is_err());
     }
 }

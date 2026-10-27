@@ -202,7 +202,8 @@ fn handle_cli(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
         | Commands::SetDpi { .. }
         | Commands::SetRate { .. }
         | Commands::SetDebounce { .. }
-        | Commands::SetSleep { .. } => {
+        | Commands::SetSleep { .. }
+        | Commands::SetButton { .. } => {
             if !mouse.get_online_status()? {
                 return Err("Mouse is offline or sleeping. Move mouse or turn it on to wake it up before changing settings.".into());
             }
@@ -322,6 +323,28 @@ fn handle_cli(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 println!("✓ Wireless sleep timeout successfully set to {} min", minutes);
             }
+        }
+
+        Commands::SetButton { button, action } => {
+            let act = driver::ButtonAction::from_str_name(&action).ok_or_else(|| {
+                format!(
+                    "Invalid button action '{action}'. Supported actions: left, right, middle, forward, backward"
+                )
+            })?;
+            let key_index = button - 1;
+            println!(
+                "Mapping button #{} ({}) to {}...",
+                button,
+                driver::BUTTON_NAMES[key_index as usize],
+                act.label()
+            );
+            mouse.set_button_mapping(key_index, act)?;
+            println!(
+                "✓ Button #{} ({}) mapped to {}",
+                button,
+                driver::BUTTON_NAMES[key_index as usize],
+                act.label()
+            );
         }
 
         Commands::Gui => unreachable!(),

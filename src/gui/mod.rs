@@ -729,50 +729,7 @@ fn remap_button(ui: &mut egui::Ui, height: f32, is_expanded: bool) -> egui::Resp
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ButtonAction {
-    LeftClick,
-    RightClick,
-    MiddleClick,
-    Forward,
-    Backward,
-}
-
-impl ButtonAction {
-    pub const ALL: [ButtonAction; 5] = [
-        ButtonAction::LeftClick,
-        ButtonAction::RightClick,
-        ButtonAction::MiddleClick,
-        ButtonAction::Forward,
-        ButtonAction::Backward,
-    ];
-
-    pub fn label(&self) -> &'static str {
-        match self {
-            ButtonAction::LeftClick => "Left button",
-            ButtonAction::RightClick => "Right button",
-            ButtonAction::MiddleClick => "Middle button",
-            ButtonAction::Forward => "Forward button",
-            ButtonAction::Backward => "Backward button",
-        }
-    }
-}
-
-pub const DEFAULT_BUTTON_MAPPINGS: [ButtonAction; 5] = [
-    ButtonAction::LeftClick,
-    ButtonAction::RightClick,
-    ButtonAction::MiddleClick,
-    ButtonAction::Forward,
-    ButtonAction::Backward,
-];
-
-pub const BUTTON_NAMES: [&str; 5] = [
-    "Left button",
-    "Right button",
-    "Middle button",
-    "Forward button",
-    "Backward button",
-];
+pub use crate::driver::{ButtonAction, BUTTON_NAMES, DEFAULT_BUTTON_MAPPINGS};
 
 fn reset_buttons_button(ui: &mut egui::Ui) -> egui::Response {
     let desired_size = Vec2::new(130.0, 38.0);
@@ -949,7 +906,7 @@ fn custom_button_dropdown(
 // ============================================================================
 enum WorkerRequest {
     ConnectAndRead,
-    ApplyConfig(MouseConfig),
+    ApplyConfig(MouseConfig, [ButtonAction; 5]),
 }
 
 enum WorkerResponse {
@@ -968,7 +925,10 @@ enum WorkerResponse {
         is_wireless: bool,
     },
     DpiStageChanged(usize),
-    ApplySuccess(MouseConfig),
+    ApplySuccess {
+        config: MouseConfig,
+        button_mappings: [ButtonAction; 5],
+    },
     ApplyError(String),
     Disconnected(String),
 }
@@ -1099,7 +1059,7 @@ fn start_worker(
                         let _ = tx_resp.send(WorkerResponse::Disconnected("Mouse not detected".into()));
                     }
                 }
-                Ok(WorkerRequest::ApplyConfig(cfg)) => {
+                Ok(WorkerRequest::ApplyConfig(cfg, btn_mappings)) => {
                     let mut active_mouse = mouse.take();
                     if active_mouse.is_none() {
                         active_mouse = MchoseMouse::open().ok();
@@ -1111,15 +1071,25 @@ fn start_worker(
                             let _ = tx_resp.send(WorkerResponse::ApplyError("Mouse is offline or sleeping".into()));
                             let _ = tx_resp.send(WorkerResponse::Disconnected("Mouse offline".into()));
                         } else {
-                            match m.set_config(&cfg) {
-                                Ok(_) => {
+                            let cfg_res = m.set_config(&cfg);
+                            let btns_res = if cfg_res.is_ok() {
+                                m.set_button_mappings(&btn_mappings)
+                            } else {
+                                Ok(())
+                            };
+
+                            match (cfg_res, btns_res) {
+                                (Ok(_), Ok(_)) => {
                                     let norm_count = cfg.dpi_stages_count.clamp(1, 6);
                                     last_known_stage = Some(cfg.active_dpi_stage.clamp(1, norm_count));
                                     consecutive_poll_errors = 0;
                                     mouse = Some(m);
-                                    let _ = tx_resp.send(WorkerResponse::ApplySuccess(cfg));
+                                    let _ = tx_resp.send(WorkerResponse::ApplySuccess {
+                                        config: cfg,
+                                        button_mappings: btn_mappings,
+                                    });
                                 }
-                                Err(e) => {
+                                (Err(e), _) | (_, Err(e)) => {
                                     drop(m);
                                     let _ = tx_resp.send(WorkerResponse::ApplyError(e.to_string()));
                                     match MchoseMouse::open() {
@@ -1407,7 +1377,8 @@ impl App {
                 self.battery = battery;
                 self.is_wireless = is_wireless;
                 self.is_connected = true;
-                self.has_unsaved_changes = self.config != self.saved_config;
+                self.has_unsaved_changes = self.config != self.saved_config
+                    || self.button_mappings != self.saved_button_mappings;
                 if self.status_msg.as_ref().map_or(true, |(m, _)| !m.starts_with("Applying") && !m.starts_with("Reloading")) {
                     self.set_status("Connected to MCHOSE mouse");
                 }
@@ -1420,6 +1391,7 @@ impl App {
             } => {
                 self.config = config.clone();
                 self.saved_config = config;
+                self.button_mappings = self.saved_button_mappings;
                 self.battery = battery;
                 self.is_wireless = is_wireless;
                 self.is_connected = true;
@@ -1444,9 +1416,14 @@ impl App {
                 self.config.active_dpi_stage = new_stage.clamp(1, count);
                 true
             }
-            WorkerResponse::ApplySuccess(saved_cfg) => {
+            WorkerResponse::ApplySuccess {
+                config: saved_cfg,
+                button_mappings: saved_btns,
+            } => {
                 self.saved_config = saved_cfg;
-                self.has_unsaved_changes = self.config != self.saved_config;
+                self.saved_button_mappings = saved_btns;
+                self.has_unsaved_changes = self.config != self.saved_config
+                    || self.button_mappings != self.saved_button_mappings;
                 if let Some((ref msg, _)) = self.status_msg {
                     if msg.starts_with("Factory") || msg.contains("factory") {
                         self.set_status("Factory settings restored");
@@ -1567,7 +1544,8 @@ impl App {
                                     if let Some(new_action) = selected_action {
                                         if self.button_mappings[idx] != new_action {
                                             self.button_mappings[idx] = new_action;
-                                            self.has_unsaved_changes = true;
+                                            self.has_unsaved_changes = self.config != self.saved_config
+                                                || self.button_mappings != self.saved_button_mappings;
                                         }
                                         self.open_dropdown = None;
                                     } else if toggle_open {
@@ -1660,10 +1638,12 @@ impl App {
 
                                         if resp_std.clicked() && is_reverse {
                                             self.config.scroll_flag = 0;
-                                            self.has_unsaved_changes = true;
+                                            self.has_unsaved_changes = self.config != self.saved_config
+                                                || self.button_mappings != self.saved_button_mappings;
                                         } else if resp_rev.clicked() && !is_reverse {
                                             self.config.scroll_flag = 1;
-                                            self.has_unsaved_changes = true;
+                                            self.has_unsaved_changes = self.config != self.saved_config
+                                                || self.button_mappings != self.saved_button_mappings;
                                         }
 
                                         // Standard segment
@@ -2422,14 +2402,17 @@ impl App {
                                         if is_factory {
                                             let factory_cfg = self.make_factory_config();
                                             self.button_mappings = DEFAULT_BUTTON_MAPPINGS;
-                                            self.saved_button_mappings = DEFAULT_BUTTON_MAPPINGS;
                                             if self.is_connected {
-                                                let _ = self.tx_req.send(WorkerRequest::ApplyConfig(factory_cfg.clone()));
+                                                let _ = self.tx_req.send(WorkerRequest::ApplyConfig(
+                                                    factory_cfg.clone(),
+                                                    DEFAULT_BUTTON_MAPPINGS,
+                                                ));
                                                 self.config = factory_cfg;
                                                 self.set_status("Applying factory defaults...");
                                             } else {
                                                 self.config = factory_cfg;
-                                                self.has_unsaved_changes = self.config != self.saved_config;
+                                                self.has_unsaved_changes = self.config != self.saved_config
+                                                    || self.button_mappings != self.saved_button_mappings;
                                                 self.set_status("Factory defaults loaded (offline)");
                                             }
                                         } else if self.is_connected {
@@ -2448,8 +2431,10 @@ impl App {
 
                                     let apply_enabled = self.is_connected && self.has_unsaved_changes && !is_busy;
                                     if apply_button(ui, apply_enabled).clicked() && apply_enabled {
-                                        let _ = self.tx_req.send(WorkerRequest::ApplyConfig(self.config.clone()));
-                                        self.saved_button_mappings = self.button_mappings;
+                                        let _ = self.tx_req.send(WorkerRequest::ApplyConfig(
+                                            self.config.clone(),
+                                            self.button_mappings,
+                                        ));
                                         self.set_status("Applying settings...");
                                     }
                                 });
@@ -2469,7 +2454,8 @@ impl App {
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_worker_messages(ctx);
-        self.has_unsaved_changes = self.config != self.saved_config;
+        self.has_unsaved_changes = self.config != self.saved_config
+            || self.button_mappings != self.saved_button_mappings;
         ctx.request_repaint_after(Duration::from_millis(200));
     }
 
@@ -3229,7 +3215,10 @@ mod tests {
         app.has_unsaved_changes = true;
 
         // Worker reports success with sent_cfg
-        app.on_worker_response(WorkerResponse::ApplySuccess(sent_cfg.clone()));
+        app.on_worker_response(WorkerResponse::ApplySuccess {
+            config: sent_cfg.clone(),
+            button_mappings: DEFAULT_BUTTON_MAPPINGS,
+        });
 
         // saved_config must record what was actually written to mouse (4), NOT current config (12)
         assert_eq!(app.saved_config.debounce_ms, 4);
@@ -3246,10 +3235,33 @@ mod tests {
         app.config = sent_cfg.clone();
         app.has_unsaved_changes = true;
 
-        app.on_worker_response(WorkerResponse::ApplySuccess(sent_cfg.clone()));
+        app.on_worker_response(WorkerResponse::ApplySuccess {
+            config: sent_cfg.clone(),
+            button_mappings: DEFAULT_BUTTON_MAPPINGS,
+        });
 
         assert_eq!(app.saved_config.debounce_ms, 4);
         assert_eq!(app.config.debounce_ms, 4);
+        assert!(!app.has_unsaved_changes);
+    }
+
+    #[test]
+    fn test_apply_success_syncs_button_mappings() {
+        let mut app = create_test_app();
+        let mut custom_btns = DEFAULT_BUTTON_MAPPINGS;
+        custom_btns[3] = ButtonAction::Backward;
+        custom_btns[4] = ButtonAction::Forward;
+
+        app.button_mappings = custom_btns;
+        app.has_unsaved_changes = true;
+
+        app.on_worker_response(WorkerResponse::ApplySuccess {
+            config: app.config.clone(),
+            button_mappings: custom_btns,
+        });
+
+        assert_eq!(app.saved_button_mappings, custom_btns);
+        assert_eq!(app.button_mappings, custom_btns);
         assert!(!app.has_unsaved_changes);
     }
 
