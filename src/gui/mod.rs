@@ -2466,7 +2466,7 @@ impl App {
                                                 self.set_status("Factory defaults loaded (offline)");
                                             }
                                         } else if self.is_connected {
-                                            self.button_mappings = self.saved_button_mappings;
+                                            self.open_dropdown = None;
                                             let _ = self.tx_req.send(WorkerRequest::ConnectAndRead);
                                             self.set_status("Reloading settings...");
                                         } else {
@@ -2782,6 +2782,7 @@ mod tests {
     fn test_reload_discards_unsaved_edits() {
         let mut app = create_test_app();
         app.config.debounce_ms = 2;
+        app.button_mappings[0] = ButtonAction::RightClick;
         app.has_unsaved_changes = true;
 
         let mut hw_config = MouseConfig::default();
@@ -2795,6 +2796,8 @@ mod tests {
 
         assert_eq!(app.config.debounce_ms, 8, "Explicit reload must overwrite user edits with hardware config");
         assert_eq!(app.saved_config.debounce_ms, 8);
+        assert_eq!(app.button_mappings, DEFAULT_BUTTON_MAPPINGS, "Explicit reload must overwrite button mappings with hardware values");
+        assert_eq!(app.saved_button_mappings, DEFAULT_BUTTON_MAPPINGS);
         assert!(!app.has_unsaved_changes);
     }
 
