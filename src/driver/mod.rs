@@ -137,19 +137,28 @@ impl ButtonAction {
     }
 
     /// Encoded 3-byte action payload bytes as defined in Section 7.1
-    pub fn to_payload_bytes(&self) -> [u8; 3] {
+    /// Encoded 4-byte action payload bytes as defined by G3 V2 controller specification
+    pub fn to_payload_bytes(&self) -> [u8; 4] {
         match self {
-            ButtonAction::LeftClick => [0x00, 0x01, 0x00],
-            ButtonAction::RightClick => [0x00, 0x02, 0x00],
-            ButtonAction::MiddleClick => [0x00, 0x04, 0x00],
-            ButtonAction::Backward => [0x00, 0x08, 0x00],
-            ButtonAction::Forward => [0x00, 0x10, 0x00],
+            ButtonAction::LeftClick => [0x20, 0x01, 0x00, 0x00],
+            ButtonAction::RightClick => [0x20, 0x02, 0x00, 0x00],
+            ButtonAction::MiddleClick => [0x20, 0x04, 0x00, 0x00],
+            ButtonAction::Backward => [0x20, 0x08, 0x00, 0x00],
+            ButtonAction::Forward => [0x20, 0x10, 0x00, 0x00],
         }
     }
 
-    #[allow(dead_code)]
     pub fn from_payload_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() >= 3 && bytes[0] == 0x00 {
+        if bytes.len() >= 4 && bytes[0] == 0x20 {
+            match bytes[1] {
+                0x01 => Some(ButtonAction::LeftClick),
+                0x02 => Some(ButtonAction::RightClick),
+                0x04 => Some(ButtonAction::MiddleClick),
+                0x08 => Some(ButtonAction::Backward),
+                0x10 => Some(ButtonAction::Forward),
+                _ => None,
+            }
+        } else if bytes.len() >= 3 && bytes[0] == 0x00 {
             match bytes[1] {
                 0x01 => Some(ButtonAction::LeftClick),
                 0x02 => Some(ButtonAction::RightClick),
@@ -610,33 +619,109 @@ impl MchoseMouse {
         self.set_config(&cfg)
     }
 
-    /// Builds a 65-byte USB HID Set Keymap packet following M-Protocol specification
-    pub fn build_set_button_packet(profile_index: u8, key_index: u8, action: ButtonAction) -> [u8; 65] {
-        let mut pkt = [0u8; 65];
-        pkt[0] = 0x4D; // Report ID 77
-        pkt[1] = 0x01; // Protocol Version
-        pkt[2] = 0x01; // Flags
-        pkt[3] = 0x06; // Length N = 6
-        pkt[4] = 0x01; // Cmd Low (0x0101 Set Keymap)
-        pkt[5] = 0x01; // Cmd High
-        pkt[6] = 0x00; // BizCode
-        pkt[7] = 0x00; // Sequence
-        pkt[8] = profile_index; // 0
-        pkt[9] = key_index;    // 0..4 (LMB, RMB, MMB, Forward, Back)
-        pkt[10] = 0x0B;        // writeControl: (1 << 3) | 3
-        let act_bytes = action.to_payload_bytes();
-        pkt[11] = act_bytes[0];
-        pkt[12] = act_bytes[1];
-        pkt[13] = act_bytes[2];
+    /// Read all 5 button mappings from the mouse hardware microcontroller memory
+    pub fn get_button_mappings(&self) -> Result<[ButtonAction; 5], DriverError> {
+        let cmd = [85, 8, 165, 11, 32, 0, 0, 0, 0, 0];
+        for attempt in 0..3 {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(40));
+            }
+            if self.write_packet(&cmd).is_err() {
+                continue;
+            }
+            if let Ok(resp) = self.read_response(8, 200) {
+                let parse_slot = |offset: usize, default_action: ButtonAction| -> ButtonAction {
+                    let slice = &resp[offset..offset + 4];
+                    if slice == [0, 0, 0, 0] {
+                        default_action
+                    } else {
+                        ButtonAction::from_payload_bytes(slice).unwrap_or(default_action)
+                    }
+                };
 
-        // Checksum: XOR from index 2 to index 13
-        let mut csum = 0u8;
-        for i in 2..=13 {
-            csum ^= pkt[i];
+                let lmb = parse_slot(8, ButtonAction::LeftClick);
+                let rmb = parse_slot(12, ButtonAction::RightClick);
+                let mmb = parse_slot(16, ButtonAction::MiddleClick);
+                let back = parse_slot(20, ButtonAction::Backward);
+                let forward = parse_slot(24, ButtonAction::Forward);
+
+                // Firmware slot 3 is Backward (0x08), slot 4 is Forward (0x10)
+                // GUI array order: [Left, Right, Middle, Forward, Backward]
+                return Ok([lmb, rmb, mmb, forward, back]);
+            }
         }
-        pkt[14] = csum;
+        Err(DriverError::Protocol("Failed to read button mappings from mouse".to_string()))
+    }
+
+    /// Builds a 64-byte USB HID payload for Command 9 (Set Mouse Keys) following G3 V2 controller spec
+    pub fn build_set_buttons_packet(mappings: &[ButtonAction; 5]) -> [u8; 64] {
+        let mut pkt = [0u8; 64];
+        pkt[0] = 85;  // 0x55 Magic
+        pkt[1] = 9;   // 0x09 Command: Set Keymap
+        pkt[2] = 165; // 0xA5
+        pkt[3] = 34;  // 0x22 Length parameter
+        pkt[4] = 32;  // 0x20 Payload length (8 slots * 4 bytes = 32 bytes)
+        pkt[5] = 0;
+        pkt[6] = 0;
+        pkt[7] = 0;
+
+        // Slot 0 (Left button): mappings[0]
+        pkt[8..12].copy_from_slice(&mappings[0].to_payload_bytes());
+
+        // Slot 1 (Right button): mappings[1]
+        pkt[12..16].copy_from_slice(&mappings[1].to_payload_bytes());
+
+        // Slot 2 (Middle button): mappings[2]
+        pkt[16..20].copy_from_slice(&mappings[2].to_payload_bytes());
+
+        // Slot 3 (Backward / Mouse 4 in firmware): mappings[4]
+        pkt[20..24].copy_from_slice(&mappings[4].to_payload_bytes());
+
+        // Slot 4 (Forward / Mouse 5 in firmware): mappings[3]
+        pkt[24..28].copy_from_slice(&mappings[3].to_payload_bytes());
+
+        // Slot 5 (DPI button): 0x21, 0x55, 0, 0
+        pkt[28] = 33;
+        pkt[29] = 85;
+        pkt[30] = 0;
+        pkt[31] = 0;
+
+        // Slot 6 (Scroll Up): 0x21, 0x38, 1, 0
+        pkt[32] = 33;
+        pkt[33] = 56;
+        pkt[34] = 1;
+        pkt[35] = 0;
+
+        // Slot 7 (Scroll Down): 0x21, 0x38, 255, 0
+        pkt[36] = 33;
+        pkt[37] = 56;
+        pkt[38] = 255;
+        pkt[39] = 0;
 
         pkt
+    }
+
+    /// Writes all 5 button mappings to the mouse microcontroller flash memory (Cmd 9)
+    pub fn set_button_mappings(&self, mappings: &[ButtonAction; 5]) -> Result<(), DriverError> {
+        if !self.get_online_status()? {
+            return Err(DriverError::Protocol("Mouse is offline or sleeping".to_string()));
+        }
+        let pkt = Self::build_set_buttons_packet(mappings);
+        for attempt in 0..3 {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(40));
+            }
+            if self.write_packet(&pkt).is_err() {
+                continue;
+            }
+            if self.read_response(9, 200).is_ok() {
+                std::thread::sleep(std::time::Duration::from_millis(30));
+                return Ok(());
+            }
+        }
+        Err(DriverError::Protocol(
+            "Failed to receive ACK after writing button mappings".to_string(),
+        ))
     }
 
     /// Sets the hardware mapping for a single button (0..=4)
@@ -644,22 +729,9 @@ impl MchoseMouse {
         if key_index > 4 {
             return Err(DriverError::Protocol(format!("Invalid keyIndex {key_index}, expected 0..=4")));
         }
-        let pkt = Self::build_set_button_packet(0, key_index, action);
-        self.flush_input();
-        self.device.write(&pkt)?;
-        std::thread::sleep(std::time::Duration::from_millis(30));
-        Ok(())
-    }
-
-    /// Writes all 5 button mappings to the mouse microcontroller flash memory
-    pub fn set_button_mappings(&self, mappings: &[ButtonAction; 5]) -> Result<(), DriverError> {
-        if !self.get_online_status()? {
-            return Err(DriverError::Protocol("Mouse is offline or sleeping".to_string()));
-        }
-        for (idx, action) in mappings.iter().enumerate() {
-            self.set_button_mapping(idx as u8, *action)?;
-        }
-        Ok(())
+        let mut mappings = self.get_button_mappings().unwrap_or(DEFAULT_BUTTON_MAPPINGS);
+        mappings[key_index as usize] = action;
+        self.set_button_mappings(&mappings)
     }
 }
 
@@ -668,48 +740,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_build_set_button_packet_checksums() {
-        // Factory defaults:
-        let p0 = MchoseMouse::build_set_button_packet(0, 0, ButtonAction::LeftClick);
-        assert_eq!(p0[0], 0x4D);
-        assert_eq!(p0[9], 0);
-        assert_eq!(p0[14], 0x0D);
+    fn test_build_set_buttons_packet_layout() {
+        let mappings = DEFAULT_BUTTON_MAPPINGS;
+        let pkt = MchoseMouse::build_set_buttons_packet(&mappings);
 
-        let p1 = MchoseMouse::build_set_button_packet(0, 1, ButtonAction::RightClick);
-        assert_eq!(p1[9], 1);
-        assert_eq!(p1[14], 0x0F);
+        // Header
+        assert_eq!(pkt[0], 85);  // 0x55
+        assert_eq!(pkt[1], 9);   // 0x09
+        assert_eq!(pkt[2], 165); // 0xA5
+        assert_eq!(pkt[3], 34);  // 0x22
+        assert_eq!(pkt[4], 32);  // 0x20
 
-        let p2 = MchoseMouse::build_set_button_packet(0, 2, ButtonAction::MiddleClick);
-        assert_eq!(p2[9], 2);
-        assert_eq!(p2[14], 0x0A);
+        // Slot 0: LMB (32, 1, 0, 0)
+        assert_eq!(&pkt[8..12], &[32, 1, 0, 0]);
 
-        let p3 = MchoseMouse::build_set_button_packet(0, 3, ButtonAction::Forward);
-        assert_eq!(p3[9], 3);
-        assert_eq!(p3[14], 0x1F);
+        // Slot 1: RMB (32, 2, 0, 0)
+        assert_eq!(&pkt[12..16], &[32, 2, 0, 0]);
 
-        let p4 = MchoseMouse::build_set_button_packet(0, 4, ButtonAction::Backward);
-        assert_eq!(p4[9], 4);
-        assert_eq!(p4[14], 0x00);
+        // Slot 2: MMB (32, 4, 0, 0)
+        assert_eq!(&pkt[16..20], &[32, 4, 0, 0]);
 
-        // Section 8 example from docs/protocol_buttons.md: Forward (key 3) mapped to Ctrl+C ([13, 01, 06])
-        let mut pkt_sec8 = [0u8; 65];
-        pkt_sec8[0] = 0x4D;
-        pkt_sec8[1] = 0x01;
-        pkt_sec8[2] = 0x01;
-        pkt_sec8[3] = 0x06;
-        pkt_sec8[4] = 0x01;
-        pkt_sec8[5] = 0x01;
-        pkt_sec8[6] = 0x00;
-        pkt_sec8[7] = 0x00;
-        pkt_sec8[8] = 0x00;
-        pkt_sec8[9] = 0x03;
-        pkt_sec8[10] = 0x0B;
-        pkt_sec8[11] = 0x13;
-        pkt_sec8[12] = 0x01;
-        pkt_sec8[13] = 0x06;
-        let mut csum = 0u8;
-        for i in 2..=13 { csum ^= pkt_sec8[i]; }
-        assert_eq!(csum, 0x1B);
+        // Slot 3: Backward (32, 8, 0, 0)
+        assert_eq!(&pkt[20..24], &[32, 8, 0, 0]);
+
+        // Slot 4: Forward (32, 16, 0, 0)
+        assert_eq!(&pkt[24..28], &[32, 16, 0, 0]);
+
+        // Slot 5: DPI (33, 85, 0, 0)
+        assert_eq!(&pkt[28..32], &[33, 85, 0, 0]);
+
+        // Slot 6: Scroll Up (33, 56, 1, 0)
+        assert_eq!(&pkt[32..36], &[33, 56, 1, 0]);
+
+        // Slot 7: Scroll Down (33, 56, 255, 0)
+        assert_eq!(&pkt[36..40], &[33, 56, 255, 0]);
     }
 
     #[test]

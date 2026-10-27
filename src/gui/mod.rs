@@ -914,11 +914,13 @@ enum WorkerResponse {
         config: MouseConfig,
         battery: Option<BatteryStatus>,
         is_wireless: bool,
+        button_mappings: [ButtonAction; 5],
     },
     Reloaded {
         config: MouseConfig,
         battery: Option<BatteryStatus>,
         is_wireless: bool,
+        button_mappings: [ButtonAction; 5],
     },
     Telemetry {
         battery: Option<BatteryStatus>,
@@ -939,6 +941,7 @@ pub struct AppInitState {
     pub battery: Option<BatteryStatus>,
     pub is_wireless: bool,
     pub is_connected: bool,
+    pub button_mappings: [ButtonAction; 5],
 }
 
 impl AppInitState {
@@ -948,12 +951,14 @@ impl AppInitState {
                 if let Ok(cfg) = m.get_config() {
                     let bat = m.get_battery().ok();
                     let is_wireless = m.info.is_wireless;
+                    let btn_mappings = m.get_button_mappings().unwrap_or(DEFAULT_BUTTON_MAPPINGS);
                     return Self {
                         mouse: Some(m),
                         config: cfg,
                         battery: bat,
                         is_wireless,
                         is_connected: true,
+                        button_mappings: btn_mappings,
                     };
                 }
             }
@@ -964,6 +969,7 @@ impl AppInitState {
             battery: None,
             is_wireless: true,
             is_connected: false,
+            button_mappings: DEFAULT_BUTTON_MAPPINGS,
         }
     }
 }
@@ -1006,6 +1012,7 @@ fn start_worker(
                                 Ok(cfg) => {
                                     let bat = m.get_battery().ok();
                                     let is_wireless = m.info.is_wireless;
+                                    let btn_mappings = m.get_button_mappings().unwrap_or(DEFAULT_BUTTON_MAPPINGS);
                                     last_known_stage = Some(cfg.active_dpi_stage);
                                     consecutive_poll_errors = 0;
                                     mouse = Some(m);
@@ -1013,6 +1020,7 @@ fn start_worker(
                                         config: cfg,
                                         battery: bat,
                                         is_wireless,
+                                        button_mappings: btn_mappings,
                                     });
                                 }
                                 Err(_) => {
@@ -1028,6 +1036,7 @@ fn start_worker(
                                                     Ok(cfg) => {
                                                         let bat = m2.get_battery().ok();
                                                         let is_wireless = m2.info.is_wireless;
+                                                        let btn_mappings = m2.get_button_mappings().unwrap_or(DEFAULT_BUTTON_MAPPINGS);
                                                         last_known_stage = Some(cfg.active_dpi_stage);
                                                         consecutive_poll_errors = 0;
                                                         mouse = Some(m2);
@@ -1035,6 +1044,7 @@ fn start_worker(
                                                             config: cfg,
                                                             battery: bat,
                                                             is_wireless,
+                                                            button_mappings: btn_mappings,
                                                         });
                                                     }
                                                     Err(e) => {
@@ -1133,6 +1143,7 @@ fn start_worker(
                                 if let Ok(cfg) = m.get_config() {
                                     let bat = m.get_battery().ok();
                                     let is_wireless = m.info.is_wireless;
+                                    let btn_mappings = m.get_button_mappings().unwrap_or(DEFAULT_BUTTON_MAPPINGS);
                                     last_known_stage = Some(cfg.active_dpi_stage);
                                     consecutive_poll_errors = 0;
                                     mouse = Some(m);
@@ -1140,6 +1151,7 @@ fn start_worker(
                                         config: cfg,
                                         battery: bat,
                                         is_wireless,
+                                        button_mappings: btn_mappings,
                                     });
                                 }
                             }
@@ -1311,8 +1323,8 @@ impl App {
             status_msg,
             current_window_h: initial_h,
             is_remap_open: false,
-            button_mappings: DEFAULT_BUTTON_MAPPINGS,
-            saved_button_mappings: DEFAULT_BUTTON_MAPPINGS,
+            button_mappings: init.button_mappings,
+            saved_button_mappings: init.button_mappings,
             open_dropdown: None,
         }
     }
@@ -1355,8 +1367,10 @@ impl App {
                 config,
                 battery,
                 is_wireless,
+                button_mappings,
             } => {
                 let has_user_edits = self.config != self.saved_config;
+                let has_user_btn_edits = self.button_mappings != self.saved_button_mappings;
                 if !has_user_edits {
                     self.config = config.clone();
                 } else {
@@ -1373,6 +1387,10 @@ impl App {
                         self.config.active_dpi_stage = config.active_dpi_stage.clamp(1, count);
                     }
                 }
+                if !has_user_btn_edits {
+                    self.button_mappings = button_mappings;
+                }
+                self.saved_button_mappings = button_mappings;
                 self.saved_config = config;
                 self.battery = battery;
                 self.is_wireless = is_wireless;
@@ -1388,10 +1406,12 @@ impl App {
                 config,
                 battery,
                 is_wireless,
+                button_mappings,
             } => {
                 self.config = config.clone();
                 self.saved_config = config;
-                self.button_mappings = self.saved_button_mappings;
+                self.button_mappings = button_mappings;
+                self.saved_button_mappings = button_mappings;
                 self.battery = battery;
                 self.is_wireless = is_wireless;
                 self.is_connected = true;
@@ -2698,6 +2718,7 @@ mod tests {
             config: hw_config.clone(),
             battery: Some(BatteryStatus { percent: 90, charging: false }),
             is_wireless: true,
+            button_mappings: DEFAULT_BUTTON_MAPPINGS,
         });
 
         assert!(app.is_connected);
@@ -2717,6 +2738,7 @@ mod tests {
             config: hw_config.clone(),
             battery: Some(BatteryStatus { percent: 75, charging: false }),
             is_wireless: true,
+            button_mappings: DEFAULT_BUTTON_MAPPINGS,
         });
 
         assert_eq!(app.config.debounce_ms, 12);
@@ -2736,6 +2758,7 @@ mod tests {
             config: hw_config.clone(),
             battery: None,
             is_wireless: true,
+            button_mappings: DEFAULT_BUTTON_MAPPINGS,
         });
 
         assert_eq!(app.config.debounce_ms, 8, "Explicit reload must overwrite user edits with hardware config");
@@ -2757,6 +2780,7 @@ mod tests {
             config: hw_config,
             battery: None,
             is_wireless: true,
+            button_mappings: DEFAULT_BUTTON_MAPPINGS,
         });
 
         assert_eq!(app.config.active_dpi_stage, 3);
@@ -2777,6 +2801,7 @@ mod tests {
             config: hw_config,
             battery: None,
             is_wireless: true,
+            button_mappings: DEFAULT_BUTTON_MAPPINGS,
         });
 
         assert_eq!(app.config.active_dpi_stage, 2, "User's UI-selected stage must be preserved");
@@ -2802,6 +2827,7 @@ mod tests {
             config: hw_config.clone(),
             battery: None,
             is_wireless: true,
+            button_mappings: DEFAULT_BUTTON_MAPPINGS,
         });
 
         assert!(repaint, "Connecting mouse should trigger repaint");
@@ -2829,6 +2855,7 @@ mod tests {
             battery: None,
             is_wireless: true,
             is_connected: false,
+            button_mappings: DEFAULT_BUTTON_MAPPINGS,
         };
         assert!(!init.is_connected);
         assert!(init.mouse.is_none());
