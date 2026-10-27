@@ -731,12 +731,19 @@ fn remap_button(ui: &mut egui::Ui, height: f32, is_expanded: bool) -> egui::Resp
 
 pub use crate::driver::{ButtonAction, BUTTON_NAMES, DEFAULT_BUTTON_MAPPINGS};
 
-fn reset_buttons_button(ui: &mut egui::Ui) -> egui::Response {
+fn reset_buttons_button(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
     let desired_size = Vec2::new(130.0, 38.0);
-    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+    let sense = if enabled { egui::Sense::click() } else { egui::Sense::hover() };
+    let (rect, response) = ui.allocate_exact_size(desired_size, sense);
 
-    let is_highlighted = response.hovered() || response.has_focus();
-    let (fill, stroke, text_color) = if response.is_pointer_button_down_on() {
+    let is_highlighted = enabled && (response.hovered() || response.has_focus());
+    let (fill, stroke, text_color) = if !enabled {
+        (
+            Color32::from_rgb(0x14, 0x19, 0x20),
+            Stroke::new(1.0, COLOR_BORDER_CONTROL),
+            COLOR_TEXT_MUTED,
+        )
+    } else if response.is_pointer_button_down_on() {
         (COLOR_BG_CARD, Stroke::new(1.0, COLOR_ACCENT), COLOR_TEXT_PRIMARY)
     } else if is_highlighted {
         (Color32::from_rgb(0x20, 0x28, 0x34), Stroke::new(1.0, COLOR_BORDER_HOVER), COLOR_TEXT_PRIMARY)
@@ -753,11 +760,15 @@ fn reset_buttons_button(ui: &mut egui::Ui) -> egui::Response {
         text_color,
     );
 
-    if response.hovered() {
+    if enabled && response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
 
-    response.on_hover_text("Reset all button mappings and scroll direction to default")
+    if enabled {
+        response.on_hover_text("Reset all button mappings and scroll direction to default")
+    } else {
+        response
+    }
 }
 
 fn custom_button_dropdown(
@@ -1480,6 +1491,11 @@ impl App {
     }
 
     fn render_buttons_card(&mut self, ui: &mut egui::Ui) {
+        let is_busy = self.is_busy();
+        if is_busy {
+            self.open_dropdown = None;
+        }
+
         card_frame().show(ui, |card_ui| {
             card_ui.vertical(|ui| {
                 // Card Header
@@ -1494,7 +1510,10 @@ impl App {
                     );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if reset_buttons_button(ui).clicked() {
+                        let can_reset = !is_busy
+                            && (self.button_mappings != DEFAULT_BUTTON_MAPPINGS || self.config.scroll_flag != 0);
+
+                        if reset_buttons_button(ui, can_reset).clicked() && can_reset {
                             self.button_mappings = DEFAULT_BUTTON_MAPPINGS;
                             self.config.scroll_flag = 0;
                             self.has_unsaved_changes = self.config != self.saved_config
@@ -1507,245 +1526,247 @@ impl App {
                 ui.add_space(12.0);
 
                 // Card Body: Two columns
-                let total_card_w = ui.available_width();
-                let col_gap = 14.0;
-                let right_col_w = 216.0;
-                let left_col_w = (total_card_w - col_gap - right_col_w).max(280.0);
-                let label_w = 125.0;
-                let dropdown_w = (left_col_w - label_w).max(200.0);
-                let row_h = 32.0;
-                let row_gap = 8.0;
-                let left_col_h = 5.0 * row_h + 4.0 * row_gap; // 192.0
+                ui.add_enabled_ui(!is_busy, |ui| {
+                    let total_card_w = ui.available_width();
+                    let col_gap = 14.0;
+                    let right_col_w = 216.0;
+                    let left_col_w = (total_card_w - col_gap - right_col_w).max(280.0);
+                    let label_w = 125.0;
+                    let dropdown_w = (left_col_w - label_w).max(200.0);
+                    let row_h = 32.0;
+                    let row_gap = 8.0;
+                    let left_col_h = 5.0 * row_h + 4.0 * row_gap; // 192.0
 
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |row_ui| {
-                    row_ui.spacing_mut().item_spacing = Vec2::ZERO;
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |row_ui| {
+                        row_ui.spacing_mut().item_spacing = Vec2::ZERO;
 
-                    // Left Column: 5 Button Rows
-                    row_ui.allocate_ui_with_layout(
-                        Vec2::new(left_col_w, left_col_h),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |col_ui| {
-                            col_ui.set_width(left_col_w);
+                        // Left Column: 5 Button Rows
+                        row_ui.allocate_ui_with_layout(
+                            Vec2::new(left_col_w, left_col_h),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |col_ui| {
+                                col_ui.set_width(left_col_w);
 
-                            for idx in 0..5 {
-                                if idx > 0 {
-                                    col_ui.add_space(row_gap);
-                                }
-
-                                col_ui.horizontal(|r_ui| {
-                                    r_ui.spacing_mut().item_spacing = Vec2::ZERO;
-
-                                    // Label
-                                    let (lbl_rect, _) = r_ui.allocate_exact_size(
-                                        Vec2::new(label_w, row_h),
-                                        egui::Sense::hover(),
-                                    );
-                                    r_ui.painter().text(
-                                        lbl_rect.left_center(),
-                                        egui::Align2::LEFT_CENTER,
-                                        BUTTON_NAMES[idx],
-                                        font_control_text(),
-                                        COLOR_TEXT_PRIMARY,
-                                    );
-
-                                    // Dropdown
-                                    let is_open = self.open_dropdown == Some(idx);
-                                    let (_, selected_action, toggle_open) = custom_button_dropdown(
-                                        r_ui,
-                                        idx,
-                                        self.button_mappings[idx],
-                                        is_open,
-                                        dropdown_w,
-                                    );
-
-                                    if let Some(new_action) = selected_action {
-                                        if self.button_mappings[idx] != new_action {
-                                            self.button_mappings[idx] = new_action;
-                                            self.has_unsaved_changes = self.config != self.saved_config
-                                                || self.button_mappings != self.saved_button_mappings;
-                                        }
-                                        self.open_dropdown = None;
-                                    } else if toggle_open {
-                                        if is_open {
-                                            self.open_dropdown = None;
-                                        } else {
-                                            self.open_dropdown = Some(idx);
-                                        }
+                                for idx in 0..5 {
+                                    if idx > 0 {
+                                        col_ui.add_space(row_gap);
                                     }
-                                });
-                            }
-                        },
-                    );
 
-                    row_ui.add_space(col_gap);
+                                    col_ui.horizontal(|r_ui| {
+                                        r_ui.spacing_mut().item_spacing = Vec2::ZERO;
 
-                    // Right Column: Scroll Direction Panel
-                    row_ui.allocate_ui_with_layout(
-                        Vec2::new(right_col_w, left_col_h),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |col_ui| {
-                            col_ui.set_width(right_col_w);
-                            egui::Frame::new()
-                                .fill(COLOR_BG_SECONDARY)
-                                .stroke(Stroke::new(1.0, COLOR_BORDER_CARD))
-                                .corner_radius(CornerRadius::same(10))
-                                .inner_margin(egui::Margin::symmetric(14, 14))
-                                .show(col_ui, |p_ui| {
-                                    p_ui.set_width(p_ui.available_width());
-                                    let inner_card_h = left_col_h - 28.0;
-                                    p_ui.set_min_height(inner_card_h);
-                                    p_ui.vertical(|ui| {
-                                        let resp_title = ui.label(
-                                            RichText::new("Scroll direction")
-                                                .font(font_section_title())
-                                                .strong()
-                                                .color(COLOR_TEXT_PRIMARY),
-                                        );
-                                        ui.add_space(4.0);
-                                        let resp_sub = ui.label(
-                                            RichText::new("Choose how the wheel moves\ncontent")
-                                                .font(font_small_caption())
-                                                .color(COLOR_TEXT_MUTED),
-                                        );
-
-                                        let track_h = 36.0;
-                                        let used_h = resp_title.rect.height() + 4.0 + resp_sub.rect.height() + track_h;
-                                        let space_h = (inner_card_h - used_h).max(14.0);
-                                        ui.add_space(space_h);
-
-                                        // Unified segmented switch track (Standard vs Reverse)
-                                        let avail_w = ui.available_width();
-                                        let (track_rect, _) = ui.allocate_exact_size(
-                                            Vec2::new(avail_w, track_h),
+                                        // Label
+                                        let (lbl_rect, _) = r_ui.allocate_exact_size(
+                                            Vec2::new(label_w, row_h),
                                             egui::Sense::hover(),
                                         );
-
-                                        let track_fill = Color32::from_rgb(0x11, 0x17, 0x22);
-                                        let track_stroke = Stroke::new(1.0, COLOR_BORDER_INSET);
-                                        ui.painter().rect(
-                                            track_rect,
-                                            CornerRadius::same(8),
-                                            track_fill,
-                                            track_stroke,
-                                            StrokeKind::Inside,
+                                        r_ui.painter().text(
+                                            lbl_rect.left_center(),
+                                            egui::Align2::LEFT_CENTER,
+                                            BUTTON_NAMES[idx],
+                                            font_control_text(),
+                                            COLOR_TEXT_PRIMARY,
                                         );
 
-                                        let pad = 3.0;
-                                        let inner_rect = track_rect.shrink(pad);
-                                        let seg_w = (inner_rect.width() / 2.0).floor();
-                                        let seg_h = inner_rect.height();
-
-                                        let rect_std = Rect::from_min_size(
-                                            inner_rect.min,
-                                            Vec2::new(seg_w, seg_h),
-                                        );
-                                        let rect_rev = Rect::from_min_size(
-                                            Pos2::new(inner_rect.min.x + seg_w, inner_rect.min.y),
-                                            Vec2::new(inner_rect.width() - seg_w, seg_h),
+                                        // Dropdown
+                                        let is_open = self.open_dropdown == Some(idx);
+                                        let (_, selected_action, toggle_open) = custom_button_dropdown(
+                                            r_ui,
+                                            idx,
+                                            self.button_mappings[idx],
+                                            is_open,
+                                            dropdown_w,
                                         );
 
-                                        let resp_std = ui.interact(rect_std, ui.auto_id_with("scroll_std"), egui::Sense::click());
-                                        let resp_rev = ui.interact(rect_rev, ui.auto_id_with("scroll_rev"), egui::Sense::click());
-
-                                        if resp_std.hovered() || resp_rev.hovered() {
-                                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                        if let Some(new_action) = selected_action {
+                                            if self.button_mappings[idx] != new_action {
+                                                self.button_mappings[idx] = new_action;
+                                                self.has_unsaved_changes = self.config != self.saved_config
+                                                    || self.button_mappings != self.saved_button_mappings;
+                                            }
+                                            self.open_dropdown = None;
+                                        } else if toggle_open {
+                                            if is_open {
+                                                self.open_dropdown = None;
+                                            } else {
+                                                self.open_dropdown = Some(idx);
+                                            }
                                         }
+                                    });
+                                }
+                            },
+                        );
 
-                                        let is_reverse = self.config.scroll_flag != 0;
+                        row_ui.add_space(col_gap);
 
-                                        if resp_std.clicked() && is_reverse {
-                                            self.config.scroll_flag = 0;
-                                            self.has_unsaved_changes = self.config != self.saved_config
-                                                || self.button_mappings != self.saved_button_mappings;
-                                        } else if resp_rev.clicked() && !is_reverse {
-                                            self.config.scroll_flag = 1;
-                                            self.has_unsaved_changes = self.config != self.saved_config
-                                                || self.button_mappings != self.saved_button_mappings;
-                                        }
+                        // Right Column: Scroll Direction Panel
+                        row_ui.allocate_ui_with_layout(
+                            Vec2::new(right_col_w, left_col_h),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |col_ui| {
+                                col_ui.set_width(right_col_w);
+                                egui::Frame::new()
+                                    .fill(COLOR_BG_SECONDARY)
+                                    .stroke(Stroke::new(1.0, COLOR_BORDER_CARD))
+                                    .corner_radius(CornerRadius::same(10))
+                                    .inner_margin(egui::Margin::symmetric(14, 14))
+                                    .show(col_ui, |p_ui| {
+                                        p_ui.set_width(p_ui.available_width());
+                                        let inner_card_h = left_col_h - 28.0;
+                                        p_ui.set_min_height(inner_card_h);
+                                        p_ui.vertical(|ui| {
+                                            let resp_title = ui.label(
+                                                RichText::new("Scroll direction")
+                                                    .font(font_section_title())
+                                                    .strong()
+                                                    .color(COLOR_TEXT_PRIMARY),
+                                            );
+                                            ui.add_space(4.0);
+                                            let resp_sub = ui.label(
+                                                RichText::new("Choose how the wheel moves\ncontent")
+                                                    .font(font_small_caption())
+                                                    .color(COLOR_TEXT_MUTED),
+                                            );
 
-                                        // Standard segment
-                                        if !is_reverse {
+                                            let track_h = 36.0;
+                                            let used_h = resp_title.rect.height() + 4.0 + resp_sub.rect.height() + track_h;
+                                            let space_h = (inner_card_h - used_h).max(14.0);
+                                            ui.add_space(space_h);
+
+                                            // Unified segmented switch track (Standard vs Reverse)
+                                            let avail_w = ui.available_width();
+                                            let (track_rect, _) = ui.allocate_exact_size(
+                                                Vec2::new(avail_w, track_h),
+                                                egui::Sense::hover(),
+                                            );
+
+                                            let track_fill = Color32::from_rgb(0x11, 0x17, 0x22);
+                                            let track_stroke = Stroke::new(1.0, COLOR_BORDER_INSET);
                                             ui.painter().rect(
-                                                rect_std,
-                                                CornerRadius::same(6),
-                                                COLOR_ACCENT,
-                                                Stroke::NONE,
+                                                track_rect,
+                                                CornerRadius::same(8),
+                                                track_fill,
+                                                track_stroke,
                                                 StrokeKind::Inside,
                                             );
-                                            ui.painter().text(
-                                                rect_std.center(),
-                                                egui::Align2::CENTER_CENTER,
-                                                "Standard",
-                                                font_control_text(),
-                                                COLOR_TEXT_ON_ACCENT,
+
+                                            let pad = 3.0;
+                                            let inner_rect = track_rect.shrink(pad);
+                                            let seg_w = (inner_rect.width() / 2.0).floor();
+                                            let seg_h = inner_rect.height();
+
+                                            let rect_std = Rect::from_min_size(
+                                                inner_rect.min,
+                                                Vec2::new(seg_w, seg_h),
                                             );
-                                        } else {
-                                            if resp_std.hovered() {
+                                            let rect_rev = Rect::from_min_size(
+                                                Pos2::new(inner_rect.min.x + seg_w, inner_rect.min.y),
+                                                Vec2::new(inner_rect.width() - seg_w, seg_h),
+                                            );
+
+                                            let resp_std = ui.interact(rect_std, ui.auto_id_with("scroll_std"), egui::Sense::click());
+                                            let resp_rev = ui.interact(rect_rev, ui.auto_id_with("scroll_rev"), egui::Sense::click());
+
+                                            if resp_std.hovered() || resp_rev.hovered() {
+                                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                            }
+
+                                            let is_reverse = self.config.scroll_flag != 0;
+
+                                            if resp_std.clicked() && is_reverse {
+                                                self.config.scroll_flag = 0;
+                                                self.has_unsaved_changes = self.config != self.saved_config
+                                                    || self.button_mappings != self.saved_button_mappings;
+                                            } else if resp_rev.clicked() && !is_reverse {
+                                                self.config.scroll_flag = 1;
+                                                self.has_unsaved_changes = self.config != self.saved_config
+                                                    || self.button_mappings != self.saved_button_mappings;
+                                            }
+
+                                            // Standard segment
+                                            if !is_reverse {
                                                 ui.painter().rect(
                                                     rect_std,
                                                     CornerRadius::same(6),
-                                                    Color32::from_rgba_unmultiplied(255, 255, 255, 10),
+                                                    COLOR_ACCENT,
                                                     Stroke::NONE,
                                                     StrokeKind::Inside,
                                                 );
-                                            }
-                                            let text_color = if resp_std.hovered() {
-                                                COLOR_TEXT_PRIMARY
+                                                ui.painter().text(
+                                                    rect_std.center(),
+                                                    egui::Align2::CENTER_CENTER,
+                                                    "Standard",
+                                                    font_control_text(),
+                                                    COLOR_TEXT_ON_ACCENT,
+                                                );
                                             } else {
-                                                COLOR_TEXT_MUTED
-                                            };
-                                            ui.painter().text(
-                                                rect_std.center(),
-                                                egui::Align2::CENTER_CENTER,
-                                                "Standard",
-                                                font_control_text(),
-                                                text_color,
-                                            );
-                                        }
+                                                if resp_std.hovered() {
+                                                    ui.painter().rect(
+                                                        rect_std,
+                                                        CornerRadius::same(6),
+                                                        Color32::from_rgba_unmultiplied(255, 255, 255, 10),
+                                                        Stroke::NONE,
+                                                        StrokeKind::Inside,
+                                                    );
+                                                }
+                                                let text_color = if resp_std.hovered() {
+                                                    COLOR_TEXT_PRIMARY
+                                                } else {
+                                                    COLOR_TEXT_MUTED
+                                                };
+                                                ui.painter().text(
+                                                    rect_std.center(),
+                                                    egui::Align2::CENTER_CENTER,
+                                                    "Standard",
+                                                    font_control_text(),
+                                                    text_color,
+                                                );
+                                            }
 
-                                        // Reverse segment
-                                        if is_reverse {
-                                            ui.painter().rect(
-                                                rect_rev,
-                                                CornerRadius::same(6),
-                                                COLOR_ACCENT,
-                                                Stroke::NONE,
-                                                StrokeKind::Inside,
-                                            );
-                                            ui.painter().text(
-                                                rect_rev.center(),
-                                                egui::Align2::CENTER_CENTER,
-                                                "Reverse",
-                                                font_control_text(),
-                                                COLOR_TEXT_ON_ACCENT,
-                                            );
-                                        } else {
-                                            if resp_rev.hovered() {
+                                            // Reverse segment
+                                            if is_reverse {
                                                 ui.painter().rect(
                                                     rect_rev,
                                                     CornerRadius::same(6),
-                                                    Color32::from_rgba_unmultiplied(255, 255, 255, 10),
+                                                    COLOR_ACCENT,
                                                     Stroke::NONE,
                                                     StrokeKind::Inside,
                                                 );
-                                            }
-                                            let text_color = if resp_rev.hovered() {
-                                                COLOR_TEXT_PRIMARY
+                                                ui.painter().text(
+                                                    rect_rev.center(),
+                                                    egui::Align2::CENTER_CENTER,
+                                                    "Reverse",
+                                                    font_control_text(),
+                                                    COLOR_TEXT_ON_ACCENT,
+                                                );
                                             } else {
-                                                COLOR_TEXT_MUTED
-                                            };
-                                            ui.painter().text(
-                                                rect_rev.center(),
-                                                egui::Align2::CENTER_CENTER,
-                                                "Reverse",
-                                                font_control_text(),
-                                                text_color,
-                                            );
-                                        }
+                                                if resp_rev.hovered() {
+                                                    ui.painter().rect(
+                                                        rect_rev,
+                                                        CornerRadius::same(6),
+                                                        Color32::from_rgba_unmultiplied(255, 255, 255, 10),
+                                                        Stroke::NONE,
+                                                        StrokeKind::Inside,
+                                                    );
+                                                }
+                                                let text_color = if resp_rev.hovered() {
+                                                    COLOR_TEXT_PRIMARY
+                                                } else {
+                                                    COLOR_TEXT_MUTED
+                                                };
+                                                ui.painter().text(
+                                                    rect_rev.center(),
+                                                    egui::Align2::CENTER_CENTER,
+                                                    "Reverse",
+                                                    font_control_text(),
+                                                    text_color,
+                                                );
+                                            }
+                                        });
                                     });
-                                });
-                        },
-                    );
+                            },
+                        );
+                    });
                 });
             });
         });
@@ -3492,9 +3513,15 @@ mod tests {
         // Test reset_buttons_button dimensions (matches Restore from mouse height 38.0)
         let mut out = ctx.run_ui(raw_input.clone(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                let resp = reset_buttons_button(ui);
-                assert_eq!(resp.rect.height(), 38.0);
-                assert_eq!(resp.rect.width(), 130.0);
+                let resp_enabled = reset_buttons_button(ui, true);
+                assert_eq!(resp_enabled.rect.height(), 38.0);
+                assert_eq!(resp_enabled.rect.width(), 130.0);
+                assert!(resp_enabled.sense.interactive());
+
+                let resp_disabled = reset_buttons_button(ui, false);
+                assert_eq!(resp_disabled.rect.height(), 38.0);
+                assert_eq!(resp_disabled.rect.width(), 130.0);
+                assert!(!resp_disabled.sense.interactive());
             });
         });
         out.textures_delta.clear();
@@ -3510,6 +3537,59 @@ mod tests {
             });
         });
         out2.textures_delta.clear();
+    }
+
+    #[test]
+    fn test_buttons_card_busy_blocking_and_reset_enabled_logic() {
+        let ctx = egui::Context::default();
+        setup_fonts(&ctx);
+
+        let raw_input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(680.0, 500.0),
+            )),
+            ..Default::default()
+        };
+
+        let mut app = create_test_app();
+        app.is_remap_open = true;
+
+        // 1. Initially default settings -> can_reset is false
+        let is_busy = app.is_busy();
+        let can_reset = !is_busy
+            && (app.button_mappings != DEFAULT_BUTTON_MAPPINGS || app.config.scroll_flag != 0);
+        assert!(!can_reset);
+
+        // 2. Modify button mappings -> can_reset is true
+        app.button_mappings[0] = ButtonAction::RightClick;
+        let is_busy = app.is_busy();
+        let can_reset = !is_busy
+            && (app.button_mappings != DEFAULT_BUTTON_MAPPINGS || app.config.scroll_flag != 0);
+        assert!(can_reset);
+
+        // 3. Mouse becomes busy applying settings -> can_reset is false, busy blocks reset
+        app.set_status("Applying settings...");
+        assert!(app.is_busy());
+        let is_busy = app.is_busy();
+        let can_reset = !is_busy
+            && (app.button_mappings != DEFAULT_BUTTON_MAPPINGS || app.config.scroll_flag != 0);
+        assert!(!can_reset);
+
+        // 4. Render buttons card while busy with open dropdown -> closes open dropdown
+        app.open_dropdown = Some(2);
+        let mut out = ctx.run_ui(raw_input.clone(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                app.render_buttons_card(ui);
+            });
+        });
+        out.textures_delta.clear();
+        assert_eq!(app.open_dropdown, None, "Dropdown must be closed when is_busy()");
+        assert_eq!(
+            app.status_msg.as_ref().unwrap().0,
+            "Applying settings...",
+            "Applying status must not be overwritten while busy"
+        );
     }
 
     #[test]
