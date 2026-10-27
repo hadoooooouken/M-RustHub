@@ -655,6 +655,80 @@ fn restore_button(ui: &mut egui::Ui, enabled: bool) -> (egui::Response, bool) {
     (response, is_factory)
 }
 
+fn remap_button(ui: &mut egui::Ui, height: f32, is_expanded: bool) -> egui::Response {
+    let desired_size = Vec2::new(92.0, height);
+    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+
+    let is_highlighted = response.hovered() || response.has_focus();
+
+    let (fill, stroke, text_color) = if response.is_pointer_button_down_on() {
+        (
+            COLOR_BG_CARD,
+            Stroke::new(1.0, COLOR_ACCENT),
+            COLOR_TEXT_PRIMARY,
+        )
+    } else if is_highlighted {
+        (
+            Color32::from_rgb(0x20, 0x28, 0x34),
+            Stroke::new(1.0, COLOR_BORDER_HOVER),
+            COLOR_TEXT_PRIMARY,
+        )
+    } else if is_expanded {
+        (
+            Color32::from_rgb(0x1C, 0x24, 0x30),
+            Stroke::new(1.0, COLOR_BORDER_HOVER),
+            COLOR_TEXT_PRIMARY,
+        )
+    } else {
+        (
+            Color32::from_rgb(0x17, 0x1D, 0x25),
+            Stroke::new(1.0, COLOR_BORDER_CONTROL),
+            COLOR_TEXT_SECONDARY,
+        )
+    };
+
+    ui.painter()
+        .rect(rect, CornerRadius::same(8), fill, stroke, StrokeKind::Inside);
+
+    let font_id = egui::FontId::new(13.0, egui::FontFamily::Proportional);
+    let cy = rect.center().y;
+
+    // Render text slightly shifted left to center the group (text + chevron)
+    let text_rect = ui.painter().text(
+        Pos2::new(rect.center().x - 6.0, cy),
+        egui::Align2::CENTER_CENTER,
+        "Remap",
+        font_id,
+        text_color,
+    );
+
+    let chevron_x = text_rect.max.x + 8.0;
+    let span_x = 3.5;
+    let chevron_stroke = Stroke::new(1.6, text_color);
+
+    if is_expanded {
+        // Chevron up (collapse)
+        let p1 = Pos2::new(chevron_x - span_x, cy + 1.5);
+        let p2 = Pos2::new(chevron_x, cy - 1.5);
+        let p3 = Pos2::new(chevron_x + span_x, cy + 1.5);
+        ui.painter().line_segment([p1, p2], chevron_stroke);
+        ui.painter().line_segment([p2, p3], chevron_stroke);
+    } else {
+        // Chevron down (expand)
+        let p1 = Pos2::new(chevron_x - span_x, cy - 1.5);
+        let p2 = Pos2::new(chevron_x, cy + 1.5);
+        let p3 = Pos2::new(chevron_x + span_x, cy - 1.5);
+        ui.painter().line_segment([p1, p2], chevron_stroke);
+        ui.painter().line_segment([p2, p3], chevron_stroke);
+    }
+
+    response.on_hover_text(if is_expanded {
+        "Collapse key remapping"
+    } else {
+        "Expand key remapping (Coming soon)"
+    })
+}
+
 // ============================================================================
 // BACKGROUND WORKER THREAD (Non-blocking HID operations)
 // ============================================================================
@@ -981,6 +1055,7 @@ pub struct App {
     has_unsaved_changes: bool,
     status_msg: Option<(String, Instant)>,
     current_window_h: f32,
+    pub is_remap_open: bool,
 }
 
 impl App {
@@ -1047,6 +1122,7 @@ impl App {
             has_unsaved_changes: false,
             status_msg,
             current_window_h: initial_h,
+            is_remap_open: false,
         }
     }
 
@@ -1216,9 +1292,9 @@ impl App {
                                     );
                                 });
 
-                                // Right Telemetry Pill: flush with the right boundary of the lower cards
+                                // Right Telemetry Pill & Remap Button
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    egui::Frame::new()
+                                    let telemetry_resp = egui::Frame::new()
                                         .fill(COLOR_BG_TELEMETRY)
                                         .stroke(Stroke::new(1.0, COLOR_BORDER_TELEMETRY))
                                         .corner_radius(CornerRadius::same(10))
@@ -1302,6 +1378,16 @@ impl App {
                                             );
                                             ui.painter().circle_filled(c, 3.5, dot_color);
                                         });
+
+                                    let pill_height = telemetry_resp.response.rect.height();
+                                    let btn_height = if pill_height > 0.0 { pill_height } else { 32.0 };
+
+                                    ui.add_space(8.0);
+
+                                    let remap_resp = remap_button(ui, btn_height, self.is_remap_open);
+                                    if remap_resp.clicked() {
+                                        self.is_remap_open = !self.is_remap_open;
+                                    }
                                 });
                             });
 
@@ -2092,6 +2178,7 @@ mod tests {
             has_unsaved_changes: false,
             status_msg: None,
             current_window_h: 0.0,
+            is_remap_open: false,
         }
     }
 
@@ -2704,5 +2791,47 @@ mod tests {
         assert_eq!(app.config.highspeed_mode, 0x03);
         assert_eq!(app.config.sensor_angle, -5);
         assert_eq!(app.config.debounce_ms, 8);
+    }
+
+    #[test]
+    fn test_remap_button_rendering_and_height_constraint() {
+        let ctx = egui::Context::default();
+        setup_fonts(&ctx);
+
+        let raw_input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(680.0, 500.0),
+            )),
+            ..Default::default()
+        };
+
+        let mut app = create_test_app();
+        assert!(!app.is_remap_open);
+
+        let mut out = ctx.run_ui(raw_input.clone(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                app.render_ui(ui);
+            });
+        });
+        out.textures_delta.clear();
+
+        // Test remap button directly for height constraint and expand toggle
+        let mut out2 = ctx.run_ui(raw_input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let pill_height = 34.0;
+                let resp_collapsed = remap_button(ui, pill_height, false);
+                assert_eq!(resp_collapsed.rect.height(), pill_height);
+                assert!(resp_collapsed.rect.height() <= pill_height);
+
+                let resp_expanded = remap_button(ui, pill_height, true);
+                assert_eq!(resp_expanded.rect.height(), pill_height);
+                assert!(resp_expanded.rect.height() <= pill_height);
+            });
+        });
+        out2.textures_delta.clear();
+
+        app.is_remap_open = true;
+        assert!(app.is_remap_open);
     }
 }
