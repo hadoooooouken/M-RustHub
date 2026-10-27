@@ -857,6 +857,10 @@ fn custom_button_dropdown(
             .order(egui::Order::Foreground)
             .fixed_pos(popup_rect.min)
             .show(ui.ctx(), |popup_ui| {
+                // Register entire popup rect to intercept clicks in padding/border
+                // and prevent them from falling through to CentralPanel
+                let _bg_resp = popup_ui.allocate_rect(popup_rect, egui::Sense::click());
+
                 popup_ui.painter().rect(
                     popup_rect,
                     CornerRadius::same(8),
@@ -867,10 +871,17 @@ fn custom_button_dropdown(
 
                 for (item_idx, action) in ButtonAction::ALL.iter().enumerate() {
                     let item_rect = Rect::from_min_size(
-                        Pos2::new(popup_rect.min.x + pad_h, popup_rect.min.y + pad_v + item_idx as f32 * item_h),
+                        Pos2::new(
+                            popup_rect.min.x + pad_h,
+                            popup_rect.min.y + pad_v + item_idx as f32 * item_h,
+                        ),
                         Vec2::new(popup_rect.width() - pad_h * 2.0, item_h),
                     );
-                    let item_resp = popup_ui.allocate_rect(item_rect, egui::Sense::click());
+                    let item_resp = popup_ui.interact(
+                        item_rect,
+                        popup_id.with(item_idx),
+                        egui::Sense::click(),
+                    );
                     let is_item_hovered = item_resp.hovered();
 
                     if is_item_hovered {
@@ -3616,5 +3627,30 @@ mod tests {
         out.textures_delta.clear();
 
         assert_eq!(app.config.report_rate, PollingRate::Hz500);
+    }
+
+    #[test]
+    fn test_custom_button_dropdown_popup_allocation() {
+        let ctx = egui::Context::default();
+        setup_fonts(&ctx);
+
+        let raw_input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(680.0, 700.0),
+            )),
+            ..Default::default()
+        };
+
+        let mut out = ctx.run_ui(raw_input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let (resp, action, toggle) =
+                    custom_button_dropdown(ui, 0, ButtonAction::LeftClick, true, 180.0);
+                assert!(!resp.clicked());
+                assert_eq!(action, None);
+                assert!(!toggle);
+            });
+        });
+        out.textures_delta.clear();
     }
 }
