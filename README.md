@@ -13,7 +13,7 @@ Zero Electron. Zero Chinese cloud telemetry. 100% offline and instant.
 ---
 
 <p align="center">
-  <img src="screenshots/mrusthub-mainwindow.webp" alt="M-RustHub - Lightweight MCHOSE HUB alternative driver GUI for MCHOSE G3 V2" />
+  <img src="screenshots/mrusthub-mainwindow.webp?v=1.1.0" alt="M-RustHub - Lightweight MCHOSE HUB alternative driver GUI for MCHOSE G3 V2" />
 </p>
 
 ---
