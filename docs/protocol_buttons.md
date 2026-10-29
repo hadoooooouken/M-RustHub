@@ -16,7 +16,7 @@ Once written to flash, bindings persist across power cycles, device reboots, and
 
 ## 2. USB HID Interface and Hardware Characteristics
 
-- **Vendor ID (VID):** `0x3837` (MCHOSE) / `0x0BDA` (Realtek 2.4G bridge)
+- **Vendor ID (VID):** `0x3837` (MCHOSE) — used by both the wired mouse and the 2.4G dongle
 - **Product ID (PID):**
   - Wired Mode: `0x418C`
   - 2.4G Wireless Dongle: `0x4245`

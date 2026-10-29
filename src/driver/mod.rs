@@ -2,7 +2,6 @@ use hidapi::{HidApi, HidDevice};
 use std::fmt;
 
 pub const VENDOR_ID_MCHOSE: u16 = 0x3837;
-pub const VENDOR_ID_REALTEK: u16 = 0x5253;
 pub const USAGE_PAGE_CONFIG: u16 = 0xFF01;
 pub const USAGE_CONFIG: u16 = 0x0010;
 
@@ -293,7 +292,7 @@ impl MchoseMouse {
         let api = HidApi::new()?;
         
         let is_target = |d: &hidapi::DeviceInfo, expected_pid: u16| {
-            (d.vendor_id() == VENDOR_ID_MCHOSE || d.vendor_id() == VENDOR_ID_REALTEK)
+            d.vendor_id() == VENDOR_ID_MCHOSE
                 && d.product_id() == expected_pid
                 && d.usage_page() == USAGE_PAGE_CONFIG
                 && d.usage() == USAGE_CONFIG
