@@ -193,6 +193,10 @@ fn handle_cli(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    if let Commands::SetButton { button: 1, .. } = cmd {
+        return Err(driver::LEFT_BUTTON_LOCKED.into());
+    }
+
     let mouse = MchoseMouse::open()?;
 
     // Check if mouse is awake and ready before attempting to write settings

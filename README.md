@@ -113,17 +113,19 @@ Features available in GUI:
 #### Remap mouse buttons:
 ```powershell
 # Syntax: set-button <1-5> <action>
-# Buttons: 1 = Left, 2 = Right, 3 = Middle, 4 = Forward, 5 = Backward
-# Actions: left, right, middle, forward, backward
+# Buttons: 2 = Right, 3 = Middle, 4 = Forward, 5 = Backward
+# Actions: left, right, middle, forward, backward, disabled
 
 # Swap Forward and Backward buttons:
 .\m_rusthub.exe set-button 4 backward
 .\m_rusthub.exe set-button 5 forward
 
-# Swap Left and Right click buttons:
-.\m_rusthub.exe set-button 1 right
+# Make the Right button act as a second Left click:
 .\m_rusthub.exe set-button 2 left
 ```
+
+> [!NOTE]
+> Button 1 (Left) cannot be remapped: the mouse firmware ignores changes to it, and the official MCHOSE driver blocks it as well.
 
 ---
 

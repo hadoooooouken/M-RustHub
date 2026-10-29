@@ -77,9 +77,9 @@ pub enum Commands {
         minutes: u8,
     },
 
-    /// Remap mouse button action (1: Left, 2: Right, 3: Middle, 4: Forward, 5: Backward)
+    /// Remap mouse button action (2: Right, 3: Middle, 4: Forward, 5: Backward; 1: Left is locked)
     SetButton {
-        /// Button number (1: Left, 2: Right, 3: Middle, 4: Forward, 5: Backward)
+        /// Button number (2: Right, 3: Middle, 4: Forward, 5: Backward; 1: Left is locked by firmware)
         #[arg(value_parser = clap::value_parser!(u8).range(1..=5))]
         button: u8,
 

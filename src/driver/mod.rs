@@ -196,6 +196,8 @@ pub const DEFAULT_BUTTON_MAPPINGS: [ButtonAction; 5] = [
     ButtonAction::Backward,
 ];
 
+pub const LEFT_BUTTON_LOCKED: &str = "Left button cannot be remapped (locked by mouse firmware)";
+
 pub const BUTTON_NAMES: [&str; 5] = [
     "Left button",
     "Right button",
@@ -643,7 +645,8 @@ impl MchoseMouse {
                     }
                 };
 
-                let lmb = parse_slot(8, ButtonAction::LeftClick);
+                // Firmware ignores slot 0, so the left button always acts as left click
+                let lmb = ButtonAction::LeftClick;
                 let rmb = parse_slot(12, ButtonAction::RightClick);
                 let mmb = parse_slot(16, ButtonAction::MiddleClick);
                 let back = parse_slot(20, ButtonAction::Backward);
@@ -669,8 +672,9 @@ impl MchoseMouse {
         pkt[6] = 0;
         pkt[7] = 0;
 
-        // Slot 0 (Left button): mappings[0]
-        pkt[8..12].copy_from_slice(&mappings[0].to_payload_bytes());
+        // Slot 0 (Left button): locked to left click, as in the official driver;
+        // the firmware ignores remaps of this slot anyway
+        pkt[8..12].copy_from_slice(&ButtonAction::LeftClick.to_payload_bytes());
 
         // Slot 1 (Right button): mappings[1]
         pkt[12..16].copy_from_slice(&mappings[1].to_payload_bytes());
@@ -728,10 +732,13 @@ impl MchoseMouse {
         ))
     }
 
-    /// Sets the hardware mapping for a single button (0..=4)
+    /// Sets the hardware mapping for a single button (1..=4; the left button is locked)
     pub fn set_button_mapping(&self, key_index: u8, action: ButtonAction) -> Result<(), DriverError> {
+        if key_index == 0 {
+            return Err(DriverError::Protocol(LEFT_BUTTON_LOCKED.to_string()));
+        }
         if key_index > 4 {
-            return Err(DriverError::Protocol(format!("Invalid keyIndex {key_index}, expected 0..=4")));
+            return Err(DriverError::Protocol(format!("Invalid keyIndex {key_index}, expected 1..=4")));
         }
         let mut mappings = self.get_button_mappings()?;
         mappings[key_index as usize] = action;
@@ -778,6 +785,17 @@ mod tests {
 
         // Slot 7: Scroll Down (33, 56, 255, 0)
         assert_eq!(&pkt[36..40], &[33, 56, 255, 0]);
+    }
+
+    #[test]
+    fn test_build_set_buttons_packet_keeps_left_button_locked() {
+        let mut mappings = DEFAULT_BUTTON_MAPPINGS;
+        mappings[0] = ButtonAction::RightClick;
+        mappings[1] = ButtonAction::LeftClick;
+        let pkt = MchoseMouse::build_set_buttons_packet(&mappings);
+
+        assert_eq!(&pkt[8..12], &[32, 1, 0, 0], "Slot 0 must stay left click");
+        assert_eq!(&pkt[12..16], &[32, 1, 0, 0], "Slot 1 remap must still be written");
     }
 
     #[test]

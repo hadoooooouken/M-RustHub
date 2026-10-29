@@ -735,7 +735,7 @@ fn remap_button(ui: &mut egui::Ui, height: f32, is_expanded: bool) -> egui::Resp
     })
 }
 
-pub use crate::driver::{ButtonAction, BUTTON_NAMES, DEFAULT_BUTTON_MAPPINGS};
+pub use crate::driver::{ButtonAction, BUTTON_NAMES, DEFAULT_BUTTON_MAPPINGS, LEFT_BUTTON_LOCKED};
 
 fn reset_buttons_button(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
     let desired_size = Vec2::new(130.0, 38.0);
@@ -782,10 +782,14 @@ fn custom_button_dropdown(
     idx: usize,
     current_action: ButtonAction,
     is_open: bool,
+    locked: bool,
     desired_w: f32,
 ) -> (egui::Response, Option<ButtonAction>, bool) {
     let desired_size = Vec2::new(desired_w, 32.0);
-    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+    let sense = if locked { egui::Sense::hover() } else { egui::Sense::click() };
+    let (rect, response) = ui.allocate_exact_size(desired_size, sense);
+    let response = if locked { response.on_hover_text(LEFT_BUTTON_LOCKED) } else { response };
+    let is_open = is_open && !locked;
     let mut toggle_open = false;
     let mut selected_action = None;
 
@@ -795,7 +799,13 @@ fn custom_button_dropdown(
 
     let is_highlighted = response.hovered() || response.has_focus() || is_open;
 
-    let (fill, stroke, text_color) = if is_open {
+    let (fill, stroke, text_color) = if locked {
+        (
+            COLOR_BG_SECONDARY,
+            Stroke::new(1.0, COLOR_BORDER_INSET),
+            COLOR_TEXT_MUTED,
+        )
+    } else if is_open {
         (
             COLOR_BG_ELEMENT,
             Stroke::new(1.5, COLOR_ACCENT),
@@ -828,13 +838,15 @@ fn custom_button_dropdown(
         text_color,
     );
 
-    // Right chevron: down v when closed, up ^ when open
+    // Right chevron: down v when closed, up ^ when open; none when locked
     let chevron_x = rect.max.x - 16.0;
     let cy = rect.center().y;
     let span_x = 3.5;
     let chevron_stroke = Stroke::new(1.5, if is_open { COLOR_ACCENT } else { COLOR_TEXT_SECONDARY });
 
-    if is_open {
+    if locked {
+        // No chevron: the locked field has no popup
+    } else if is_open {
         let p1 = Pos2::new(chevron_x - span_x, cy + 1.5);
         let p2 = Pos2::new(chevron_x, cy - 1.5);
         let p3 = Pos2::new(chevron_x + span_x, cy + 1.5);
@@ -1336,6 +1348,7 @@ impl App {
                                             idx,
                                             self.button_mappings[idx],
                                             is_open,
+                                            idx == 0, // left button is locked by firmware
                                             dropdown_w,
                                         );
 
@@ -3546,8 +3559,33 @@ mod tests {
         let mut out = ctx.run_ui(raw_input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
                 let (resp, action, toggle) =
-                    custom_button_dropdown(ui, 0, ButtonAction::LeftClick, true, 180.0);
+                    custom_button_dropdown(ui, 1, ButtonAction::RightClick, true, false, 180.0);
                 assert!(!resp.clicked());
+                assert_eq!(action, None);
+                assert!(!toggle);
+            });
+        });
+        out.textures_delta.clear();
+    }
+
+    #[test]
+    fn test_locked_button_dropdown_never_opens() {
+        let ctx = egui::Context::default();
+        setup_fonts(&ctx);
+
+        let raw_input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(680.0, 700.0),
+            )),
+            ..Default::default()
+        };
+
+        let mut out = ctx.run_ui(raw_input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let (resp, action, toggle) =
+                    custom_button_dropdown(ui, 0, ButtonAction::LeftClick, true, true, 180.0);
+                assert!(!resp.sense.senses_click(), "Locked field must not be clickable");
                 assert_eq!(action, None);
                 assert!(!toggle);
             });

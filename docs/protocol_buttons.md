@@ -80,6 +80,12 @@ The microcontroller firmware manages 8 consecutive button slots:
 > - `mappings[3]` (Forward) maps to hardware `Slot 4`.
 > - `mappings[4]` (Backward) maps to hardware `Slot 3`.
 
+> [!IMPORTANT]
+> **Slot 0 (LMB) is locked:**
+> The firmware ignores remaps written to `Slot 0`: the left button keeps acting as left click (verified on hardware).
+> The official web driver blocks it too: every assignment to key index `0` is rejected with the `leftBtnNoChange` toast ("Left button modification not allowed").
+> M-RustHub always writes `[32, 1, 0, 0]` to `Slot 0` and reports it as Left Click.
+
 > [!NOTE]
 > **Factory Unprogrammed State:**
 > If a button has never been reprogrammed or is set to factory defaults, reading flash may return all zeroes (`[0, 0, 0, 0]`). The driver interprets `[0, 0, 0, 0]` as the default physical action for that slot.
