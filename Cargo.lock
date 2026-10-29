@@ -1046,6 +1046,8 @@ dependencies = [
  "clap",
  "eframe",
  "hidapi",
+ "raw-window-handle",
+ "windows-sys 0.61.2",
  "winres",
 ]
 

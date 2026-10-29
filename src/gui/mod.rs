@@ -1255,6 +1255,73 @@ fn target_window_height(stages_count: usize) -> f32 {
     445.0 + (count - 1) as f32 * 43.0
 }
 
+/// Monitor work area (screen minus taskbar) and current window geometry, in physical pixels
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ScreenBounds {
+    work_top: i32,
+    work_bottom: i32,
+    window_left: i32,
+    window_top: i32,
+    /// Title bar and borders: outer window height minus client height
+    chrome_h: i32,
+}
+
+impl ScreenBounds {
+    /// Largest client height (in points) that fits into the work area
+    fn max_inner_height(&self, ppp: f32) -> f32 {
+        ((self.work_bottom - self.work_top - self.chrome_h) as f32 / ppp).floor()
+    }
+
+    /// New outer position (in points) that keeps a window of `inner_h` points
+    /// inside the work area, or None if it already fits
+    fn fit_position(&self, inner_h: f32, ppp: f32) -> Option<egui::Pos2> {
+        let outer_h = (inner_h * ppp).round() as i32 + self.chrome_h;
+        if self.window_top + outer_h <= self.work_bottom {
+            return None;
+        }
+        let top = (self.work_bottom - outer_h).max(self.work_top);
+        Some(egui::pos2(self.window_left as f32 / ppp, top as f32 / ppp))
+    }
+}
+
+#[cfg(windows)]
+fn query_screen_bounds(frame: &eframe::Frame) -> Option<ScreenBounds> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetClientRect, GetWindowRect};
+
+    let RawWindowHandle::Win32(handle) = frame.window_handle().ok()?.as_raw() else {
+        return None;
+    };
+    let hwnd = handle.hwnd.get() as _;
+    // SAFETY: hwnd is the live window handle owned by eframe; all out-structs are plain data
+    unsafe {
+        let mut window: RECT = std::mem::zeroed();
+        let mut client: RECT = std::mem::zeroed();
+        if GetWindowRect(hwnd, &mut window) == 0 || GetClientRect(hwnd, &mut client) == 0 {
+            return None;
+        }
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut info) == 0 {
+            return None;
+        }
+        Some(ScreenBounds {
+            work_top: info.rcWork.top,
+            work_bottom: info.rcWork.bottom,
+            window_left: window.left,
+            window_top: window.top,
+            chrome_h: (window.bottom - window.top) - (client.bottom - client.top),
+        })
+    }
+}
+
+#[cfg(not(windows))]
+fn query_screen_bounds(_frame: &eframe::Frame) -> Option<ScreenBounds> {
+    None
+}
+
 // ============================================================================
 // MAIN APP STRUCT
 // ============================================================================
@@ -1269,6 +1336,7 @@ pub struct App {
     has_unsaved_changes: bool,
     status_msg: Option<(String, Instant)>,
     current_window_h: f32,
+    screen_bounds: Option<ScreenBounds>,
     pub is_remap_open: bool,
     pub button_mappings: [ButtonAction; 5],
     pub saved_button_mappings: [ButtonAction; 5],
@@ -1339,6 +1407,7 @@ impl App {
             has_unsaved_changes: false,
             status_msg,
             current_window_h: initial_h,
+            screen_bounds: None,
             is_remap_open: false,
             button_mappings: init.button_mappings,
             saved_button_mappings: init.button_mappings,
@@ -1786,6 +1855,30 @@ impl App {
     }
 
     pub fn render_ui(&mut self, ui: &mut egui::Ui) {
+        let ppp = ui.ctx().pixels_per_point();
+        let max_h = self.screen_bounds.map_or(f32::INFINITY, |b| b.max_inner_height(ppp));
+
+        // Scrolls only when the content is taller than the monitor work area
+        let content_h = egui::ScrollArea::vertical()
+            .max_height(max_h)
+            .auto_shrink([false, true])
+            .show(ui, |ui| self.render_content(ui))
+            .inner;
+
+        // Dynamically adjust window height to wrap content, capped by the monitor work area
+        let exact_h = content_h.round().min(max_h);
+        if (exact_h - self.current_window_h).abs() > 0.5 {
+            self.current_window_h = exact_h;
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(680.0, exact_h)));
+            // Move the window up if its bottom (Apply / Restore) would end up below the work area
+            if let Some(pos) = self.screen_bounds.and_then(|b| b.fit_position(exact_h, ppp)) {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
+            }
+        }
+    }
+
+    /// Renders all cards and returns the content height including outer margins
+    fn render_content(&mut self, ui: &mut egui::Ui) -> f32 {
         // Enforce consistent outer padding of 14 px on all 4 sides
         let frame_resp = egui::Frame::new()
             .fill(COLOR_BG_MAIN)
@@ -2496,12 +2589,7 @@ impl App {
                 });
             });
 
-        // Dynamically adjust window height to wrap content with 14 px vertical margins
-        let exact_h = frame_resp.response.rect.height().round();
-        if (exact_h - self.current_window_h).abs() > 0.5 {
-            self.current_window_h = exact_h;
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(680.0, exact_h)));
-        }
+        frame_resp.response.rect.height()
     }
 }
 
@@ -2513,7 +2601,8 @@ impl eframe::App for App {
         ctx.request_repaint_after(Duration::from_millis(200));
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.screen_bounds = query_screen_bounds(frame);
         self.render_ui(ui);
     }
 }
@@ -2725,6 +2814,7 @@ mod tests {
             has_unsaved_changes: false,
             status_msg: None,
             current_window_h: 0.0,
+            screen_bounds: None,
             is_remap_open: false,
             button_mappings: DEFAULT_BUTTON_MAPPINGS,
             saved_button_mappings: DEFAULT_BUTTON_MAPPINGS,
@@ -3210,6 +3300,53 @@ mod tests {
         for s in 1..6 {
             assert_eq!(target_window_height(s + 1) - target_window_height(s), 43.0);
         }
+    }
+
+    #[test]
+    fn test_screen_bounds_max_height_and_fit_position() {
+        // 1920x1080 at 150%: work area 0..1032 px (48 px taskbar), 46 px title bar + borders
+        let b = ScreenBounds { work_top: 0, work_bottom: 1032, window_left: 300, window_top: 200, chrome_h: 46 };
+        assert_eq!(b.max_inner_height(1.5), 657.0);
+
+        // Fits below current position -> no move
+        assert_eq!(b.fit_position(400.0, 1.5), None);
+        // Too tall for current position -> moved up so the bottom touches the work area edge
+        assert_eq!(b.fit_position(657.0, 1.5), Some(egui::pos2(200.0, 0.0)));
+        // Never moved above the work area top
+        let b2 = ScreenBounds { work_top: 40, ..b };
+        assert_eq!(b2.fit_position(980.0, 1.5).map(|p| p.y), Some(40.0 / 1.5));
+    }
+
+    #[test]
+    fn test_window_height_capped_by_work_area_with_scroll() {
+        let ctx = egui::Context::default();
+        setup_fonts(&ctx);
+        let mut app = create_test_app();
+        app.config.dpi_stages_count = 6;
+        app.is_remap_open = true;
+        // 150% laptop: only 657 points available, content is 980 points tall
+        app.screen_bounds = Some(ScreenBounds { work_top: 0, work_bottom: 1032, window_left: 0, window_top: 0, chrome_h: 46 });
+
+        for _ in 0..2 {
+            let raw_input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(680.0, 657.0))),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(raw_input, |ctx| {
+                ctx.set_pixels_per_point(1.5);
+                egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| app.render_ui(ui));
+            });
+            out.textures_delta.clear();
+        }
+        assert_eq!(app.current_window_h, 657.0, "Window height must be capped by the work area");
+
+        // Without bounds (e.g. tests, non-Windows) the window wraps the full content
+        app.screen_bounds = None;
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| app.render_ui(ui));
+        });
+        out.textures_delta.clear();
+        assert!(app.current_window_h > 900.0);
     }
 
     #[test]
