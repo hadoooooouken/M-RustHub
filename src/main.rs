@@ -328,7 +328,7 @@ fn handle_cli(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
         Commands::SetButton { button, action } => {
             let act = driver::ButtonAction::from_str_name(&action).ok_or_else(|| {
                 format!(
-                    "Invalid button action '{action}'. Supported actions: left, right, middle, forward, backward"
+                    "Invalid button action '{action}'. Supported actions: left, right, middle, forward, backward, disabled"
                 )
             })?;
             let key_index = button - 1;

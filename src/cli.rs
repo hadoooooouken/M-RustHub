@@ -83,7 +83,7 @@ pub enum Commands {
         #[arg(value_parser = clap::value_parser!(u8).range(1..=5))]
         button: u8,
 
-        /// Action name (left, right, middle, forward, backward)
+        /// Action name (left, right, middle, forward, backward, disabled)
         action: String,
     },
 
