@@ -68,6 +68,14 @@ Features available in GUI:
 
 ### 2. Command Line Interface (CLI)
 
+> [!NOTE]
+> `m_rusthub.exe` is a GUI-subsystem binary, so the shell does not wait for it: output may appear after the next prompt, and the exit code is not reported. When you need to read the output or check the exit code, make the shell wait:
+> ```powershell
+> .\m_rusthub.exe status | Out-Host     # PowerShell
+> start /wait m_rusthub.exe status      # cmd (exit code in %ERRORLEVEL%)
+> ```
+> Hotkey tools (AutoHotkey, shortcuts, Task Scheduler) are unaffected.
+
 #### View current status & telemetry:
 ```powershell
 .\m_rusthub.exe status
