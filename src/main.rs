@@ -10,50 +10,30 @@ use driver::{MchoseMouse, PollingRate};
 
 #[cfg(windows)]
 fn attach_parent_console() {
-    unsafe {
-        unsafe extern "system" {
-            fn AttachConsole(dw_process_id: u32) -> i32;
-            fn GetStdHandle(n_std_handle: u32) -> isize;
-            fn SetStdHandle(n_std_handle: u32, h_handle: isize) -> i32;
-            fn CreateFileW(
-                lp_file_name: *const u16,
-                dw_desired_access: u32,
-                dw_share_mode: u32,
-                lp_security_attributes: isize,
-                dw_creation_disposition: u32,
-                dw_flags_and_attributes: u32,
-                h_template_file: isize,
-            ) -> isize;
-        }
-        const ATTACH_PARENT_PROCESS: u32 = 0xFFFF_FFFF;
-        const STD_OUTPUT_HANDLE: u32 = 0xFFFF_FFF5; // ((DWORD)-11)
-        const STD_ERROR_HANDLE: u32 = 0xFFFF_FFF4;  // ((DWORD)-12)
+    use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING};
+    use windows_sys::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
+    };
 
+    unsafe {
         let stdout_handle = GetStdHandle(STD_OUTPUT_HANDLE);
         let stderr_handle = GetStdHandle(STD_ERROR_HANDLE);
-        let need_stdout = stdout_handle == 0 || stdout_handle == -1;
-        let need_stderr = stderr_handle == 0 || stderr_handle == -1;
+        let need_stdout = stdout_handle.is_null() || stdout_handle == INVALID_HANDLE_VALUE;
+        let need_stderr = stderr_handle.is_null() || stderr_handle == INVALID_HANDLE_VALUE;
 
         if (need_stdout || need_stderr) && AttachConsole(ATTACH_PARENT_PROCESS) != 0 {
-            const GENERIC_READ: u32 = 0x8000_0000;
-            const GENERIC_WRITE: u32 = 0x4000_0000;
-            const FILE_SHARE_READ: u32 = 1;
-            const FILE_SHARE_WRITE: u32 = 2;
-            const OPEN_EXISTING: u32 = 3;
-
-            let conout_name: [u16; 8] = [
-                'C' as u16, 'O' as u16, 'N' as u16, 'O' as u16, 'U' as u16, 'T' as u16, '$' as u16, 0,
-            ];
+            let conout_name: Vec<u16> = "CONOUT$".encode_utf16().chain(std::iter::once(0)).collect();
             let handle = CreateFileW(
                 conout_name.as_ptr(),
                 GENERIC_READ | GENERIC_WRITE,
                 FILE_SHARE_READ | FILE_SHARE_WRITE,
-                0,
+                std::ptr::null(),
                 OPEN_EXISTING,
                 0,
-                0,
+                std::ptr::null_mut(),
             );
-            if handle != -1 {
+            if handle != INVALID_HANDLE_VALUE {
                 if need_stdout {
                     SetStdHandle(STD_OUTPUT_HANDLE, handle);
                 }
@@ -67,21 +47,15 @@ fn attach_parent_console() {
 
 #[cfg(windows)]
 fn focus_existing_gui_window() {
-    unsafe {
-        unsafe extern "system" {
-            fn FindWindowW(lp_class_name: *const u16, lp_window_name: *const u16) -> isize;
-            fn IsIconic(h_wnd: isize) -> i32;
-            fn ShowWindow(h_wnd: isize, n_cmd_show: i32) -> i32;
-            fn SetForegroundWindow(h_wnd: isize) -> i32;
-        }
+    use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, IsIconic, SW_RESTORE, SetForegroundWindow, ShowWindow};
 
-        const SW_RESTORE: i32 = 9;
+    unsafe {
         let title: Vec<u16> = gui::WINDOW_TITLE.encode_utf16().chain(std::iter::once(0)).collect();
 
         // Retry up to 10 times (50ms each) in case the first GUI instance is still creating its window
         for attempt in 0..10 {
             let hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
-            if hwnd != 0 {
+            if !hwnd.is_null() {
                 if IsIconic(hwnd) != 0 {
                     ShowWindow(hwnd, SW_RESTORE);
                 }
@@ -103,30 +77,20 @@ fn acquire_instance_lock_internal(
     dev_timeout_ms: u32,
     focus_window: bool,
 ) -> Result<(bool, Option<isize>, Option<isize>), String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_ABANDONED, WAIT_EVENT, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject};
+
+    // Handles are returned as isize because HANDLE is a raw pointer (not Send) and tests move them across threads
     unsafe {
-        unsafe extern "system" {
-            fn CreateMutexW(
-                lp_mutex_attributes: isize,
-                b_initial_owner: i32,
-                lp_name: *const u16,
-            ) -> isize;
-            fn WaitForSingleObject(h_handle: isize, dw_milliseconds: u32) -> u32;
-            fn ReleaseMutex(h_mutex: isize) -> i32;
-            fn CloseHandle(h_object: isize) -> i32;
-        }
-
-        const WAIT_OBJECT_0: u32 = 0x0000_0000;
-        const WAIT_ABANDONED: u32 = 0x0000_0080;
-
-        let is_acquired = |status: u32| status == WAIT_OBJECT_0 || status == WAIT_ABANDONED;
+        let is_acquired = |status: WAIT_EVENT| status == WAIT_OBJECT_0 || status == WAIT_ABANDONED;
 
         let mut gui_name_u16: Vec<u16> = gui_mutex_name.encode_utf16().collect();
         gui_name_u16.push(0);
         let mut dev_name_u16: Vec<u16> = dev_mutex_name.encode_utf16().collect();
         dev_name_u16.push(0);
 
-        let gui_mutex = CreateMutexW(0, 0, gui_name_u16.as_ptr());
-        if gui_mutex == 0 {
+        let gui_mutex = CreateMutexW(std::ptr::null(), 0, gui_name_u16.as_ptr());
+        if gui_mutex.is_null() {
             return Ok((true, None, None));
         }
 
@@ -156,14 +120,14 @@ fn acquire_instance_lock_internal(
         };
 
         // 2. Acquire the device access mutex (wait up to dev_timeout_ms for any active CLI command to finish)
-        let dev_mutex = CreateMutexW(0, 0, dev_name_u16.as_ptr());
-        if dev_mutex == 0 {
-            return Ok((true, retained_gui, None));
+        let dev_mutex = CreateMutexW(std::ptr::null(), 0, dev_name_u16.as_ptr());
+        if dev_mutex.is_null() {
+            return Ok((true, retained_gui.map(|h| h as isize), None));
         }
 
         if is_acquired(WaitForSingleObject(dev_mutex, dev_timeout_ms)) {
             // Keep mutex handles open for the lifetime of the process; Windows releases them on exit
-            return Ok((true, retained_gui, Some(dev_mutex)));
+            return Ok((true, retained_gui.map(|h| h as isize), Some(dev_mutex as isize)));
         }
 
         CloseHandle(dev_mutex);
@@ -406,18 +370,13 @@ mod tests {
     #[cfg(windows)]
     impl Drop for TestLockGuard {
         fn drop(&mut self) {
+            use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+            use windows_sys::Win32::System::Threading::ReleaseMutex;
+
             unsafe {
-                unsafe extern "system" {
-                    fn ReleaseMutex(h: isize) -> i32;
-                    fn CloseHandle(h: isize) -> i32;
-                }
-                if let Some(h) = self.gui.take() {
-                    ReleaseMutex(h);
-                    CloseHandle(h);
-                }
-                if let Some(h) = self.dev.take() {
-                    ReleaseMutex(h);
-                    CloseHandle(h);
+                for h in [self.gui.take(), self.dev.take()].into_iter().flatten() {
+                    ReleaseMutex(h as HANDLE);
+                    CloseHandle(h as HANDLE);
                 }
             }
         }
