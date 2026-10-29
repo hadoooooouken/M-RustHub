@@ -2205,15 +2205,22 @@ impl App {
                                             });
                                         }).response;
 
-                                        // Row background click (excluding interactive controls like slider and step buttons)
-                                        let clicked_bg = ui.input(|inp| {
+                                        // Row background click (excluding interactive controls like slider and step buttons).
+                                        // Ignored when another layer (e.g. a button dropdown popup) is on top of the row
+                                        let row_layer = ui.layer_id();
+                                        let is_row_layer_at = |pos: Pos2| ui.ctx().layer_id_at(pos) == Some(row_layer);
+                                        // Context locks must not be nested, so the layer check runs outside `ui.input`
+                                        let clicked_pos = ui.input(|inp| {
                                             inp.pointer.button_clicked(egui::PointerButton::Primary)
-                                                && inp.pointer.interact_pos().is_some_and(|pos| {
-                                                    row_resp.rect.contains(pos)
-                                                         && !slider_rect.contains(pos)
-                                                         && !btn_minus_rect.contains(pos)
-                                                         && !btn_plus_rect.contains(pos)
-                                                })
+                                                .then(|| inp.pointer.interact_pos())
+                                                .flatten()
+                                        });
+                                        let clicked_bg = clicked_pos.is_some_and(|pos| {
+                                            row_resp.rect.contains(pos)
+                                                && !slider_rect.contains(pos)
+                                                && !btn_minus_rect.contains(pos)
+                                                && !btn_plus_rect.contains(pos)
+                                                && is_row_layer_at(pos)
                                         });
 
                                         if (stage_clicked || dpi_clicked || clicked_bg) && !is_active {
@@ -2228,6 +2235,7 @@ impl App {
                                                     && !slider_rect.contains(pos)
                                                     && !btn_minus_rect.contains(pos)
                                                     && !btn_plus_rect.contains(pos)
+                                                    && is_row_layer_at(pos)
                                                 {
                                                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                                                 }
@@ -3299,6 +3307,59 @@ mod tests {
         // Each additional DPI stage increments height by exactly 43 px
         for s in 1..6 {
             assert_eq!(target_window_height(s + 1) - target_window_height(s), 43.0);
+        }
+    }
+
+    #[test]
+    fn test_dropdown_popup_click_does_not_activate_dpi_row_below() {
+        // The last dropdown popup (Backward button) overlaps the top of the Stage 1 row
+        let screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(680.0, 1200.0)));
+        let make_app = || {
+            let mut app = create_test_app();
+            app.is_remap_open = true;
+            app.open_dropdown = Some(4);
+            app.config.active_dpi_stage = 2;
+            app.saved_config.active_dpi_stage = 2;
+            app
+        };
+        let run = |ctx: &egui::Context, app: &mut App, events: Vec<egui::Event>| {
+            let raw_input = egui::RawInput { screen_rect, events, ..Default::default() };
+            let mut out = ctx.run_ui(raw_input, |ctx| {
+                egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| app.render_ui(ui));
+            });
+            out.textures_delta.clear();
+        };
+        let open_popup = || {
+            let ctx = egui::Context::default();
+            setup_fonts(&ctx);
+            let mut app = make_app();
+            run(&ctx, &mut app, vec![]);
+            run(&ctx, &mut app, vec![]);
+            let popup = ctx.memory(|m| {
+                m.areas()
+                    .visible_layer_ids()
+                    .into_iter()
+                    .filter(|l| l.order == egui::Order::Foreground)
+                    .find_map(|l| m.area_rect(l.id))
+            });
+            (ctx, app, popup.expect("Dropdown popup must be visible"))
+        };
+
+        // Click every 2 px across the last popup item (Backward)
+        let (_, _, popup) = open_popup();
+        let mut y = popup.max.y - 32.0;
+        while y < popup.max.y - 4.0 {
+            let (ctx, mut app, _) = open_popup();
+            let pos = egui::pos2(popup.center().x, y);
+            run(&ctx, &mut app, vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() },
+            ]);
+            run(&ctx, &mut app, vec![
+                egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() },
+            ]);
+            assert_eq!(app.config.active_dpi_stage, 2, "Click on popup at y={y} must not activate the DPI row below");
+            y += 2.0;
         }
     }
 
