@@ -76,7 +76,7 @@ fn focus_existing_gui_window() {
         }
 
         const SW_RESTORE: i32 = 9;
-        let title: Vec<u16> = "M-RustHub - G3 V2 Manager\0".encode_utf16().collect();
+        let title: Vec<u16> = gui::WINDOW_TITLE.encode_utf16().chain(std::iter::once(0)).collect();
 
         // Retry up to 10 times (50ms each) in case the first GUI instance is still creating its window
         for attempt in 0..10 {

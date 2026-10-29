@@ -27,6 +27,9 @@ const COLOR_BORDER_HOVER: Color32 = Color32::from_rgb(0x45, 0x53, 0x66);
 const COLOR_BORDER_TELEMETRY: Color32 = Color32::from_rgb(0x25, 0x2F, 0x3B);
 const COLOR_BORDER_INSET: Color32 = Color32::from_rgb(0x1E, 0x26, 0x32);
 
+// Also used by main.rs to find and focus an already running GUI window
+pub(crate) const WINDOW_TITLE: &str = concat!("M-RustHub v", env!("CARGO_PKG_VERSION"), " - G3 V2 Manager");
+
 const COLOR_SUCCESS: Color32 = Color32::from_rgb(0x34, 0xD3, 0x99);
 const COLOR_WARNING: Color32 = Color32::from_rgb(0xFB, 0xBF, 0x24);
 const COLOR_ERROR: Color32 = Color32::from_rgb(0xEF, 0x44, 0x44);
@@ -2632,7 +2635,7 @@ pub fn run_gui() -> eframe::Result {
             .with_resizable(false)
             .with_maximize_button(false)
             .with_icon(icon_data)
-            .with_title("M-RustHub - G3 V2 Manager"),
+            .with_title(WINDOW_TITLE),
         ..Default::default()
     };
 
