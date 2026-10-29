@@ -1359,7 +1359,6 @@ impl App {
     pub(crate) fn make_factory_config(&self) -> MouseConfig {
         let mut factory_cfg = MouseConfig::default();
         factory_cfg.sensor_flags = self.saved_config.sensor_flags;
-        factory_cfg.scroll_flag = self.saved_config.scroll_flag;
         factory_cfg.highspeed_mode = self.saved_config.highspeed_mode;
         factory_cfg.sensor_angle = self.saved_config.sensor_angle;
         factory_cfg
@@ -3369,11 +3368,11 @@ mod tests {
 
         // Hardware fields must be preserved:
         assert_eq!(factory_cfg.sensor_flags, 0x81);
-        assert_eq!(factory_cfg.scroll_flag, 0x02);
         assert_eq!(factory_cfg.highspeed_mode, 0x03);
         assert_eq!(factory_cfg.sensor_angle, -5);
 
         // User settings must be reset to defaults:
+        assert_eq!(factory_cfg.scroll_flag, 0);
         assert_eq!(factory_cfg.debounce_ms, 8);
         assert_eq!(factory_cfg.report_rate, PollingRate::Hz250);
         assert_eq!(factory_cfg.sleep_minutes, 3);
@@ -3395,9 +3394,9 @@ mod tests {
         app.has_unsaved_changes = app.config != app.saved_config;
 
         assert_eq!(app.config.sensor_flags, 0x81);
-        assert_eq!(app.config.scroll_flag, 0x02);
         assert_eq!(app.config.highspeed_mode, 0x03);
         assert_eq!(app.config.sensor_angle, -5);
+        assert_eq!(app.config.scroll_flag, 0);
         assert_eq!(app.config.debounce_ms, 8);
     }
 
