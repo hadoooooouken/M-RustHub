@@ -1394,9 +1394,12 @@ impl App {
                     // them with defaults and causing permanent unsaved changes state
                     self.config.lod = config.lod;
                     self.config.sensor_flags = config.sensor_flags;
-                    self.config.scroll_flag = config.scroll_flag;
                     self.config.highspeed_mode = config.highspeed_mode;
                     self.config.sensor_angle = config.sensor_angle;
+
+                    if self.config.scroll_flag == self.saved_config.scroll_flag {
+                        self.config.scroll_flag = config.scroll_flag;
+                    }
 
                     if self.config.active_dpi_stage == self.saved_config.active_dpi_stage {
                         let count = self.config.dpi_stages_count.clamp(1, 6);
@@ -2879,6 +2882,25 @@ mod tests {
         app.config.debounce_ms = 8;
         app.has_unsaved_changes = app.config != app.saved_config;
         assert!(!app.has_unsaved_changes, "Reverting edits should clear unsaved changes since hidden fields match");
+    }
+
+    #[test]
+    fn test_reconnect_preserves_unsaved_scroll_direction() {
+        let mut app = create_test_app();
+        // User switched to Reverse but did not apply
+        app.config.scroll_flag = 1;
+        app.has_unsaved_changes = true;
+
+        // Mouse reconnects (e.g. after sleep) still reporting Standard
+        app.on_worker_response(WorkerResponse::Connected {
+            config: MouseConfig::default(),
+            battery: None,
+            is_wireless: true,
+            button_mappings: DEFAULT_BUTTON_MAPPINGS,
+        });
+
+        assert_eq!(app.config.scroll_flag, 1, "Unsaved scroll direction must be preserved");
+        assert!(app.has_unsaved_changes);
     }
 
     #[test]
