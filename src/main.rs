@@ -249,7 +249,7 @@ fn handle_cli(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
                         println!("\nConfiguration:");
                         println!("  Polling Rate:     {}", cfg.report_rate);
                         println!("  Active DPI Stage: #{} of {}", cfg.active_dpi_stage, cfg.dpi_stages_count);
-                        for (i, dpi) in cfg.dpi_stages.iter().enumerate() {
+                        for (i, dpi) in cfg.dpi_stages.iter().take(cfg.dpi_stages_count).enumerate() {
                             let mark = if i + 1 == cfg.active_dpi_stage { " <-- ACTIVE" } else { "" };
                             println!("    Stage {}:        {} DPI{}", i + 1, dpi, mark);
                         }
