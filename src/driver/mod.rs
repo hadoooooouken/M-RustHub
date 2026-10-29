@@ -136,7 +136,7 @@ impl ButtonAction {
             ButtonAction::MiddleClick => 0x000004,
             ButtonAction::Forward => 0x000010,
             ButtonAction::Backward => 0x000008,
-            ButtonAction::Disabled => 0xFF0000,
+            ButtonAction::Disabled => 0x000000,
             ButtonAction::Custom(raw) => {
                 ((raw[0] as u32) << 24)
                     | ((raw[1] as u32) << 16)
@@ -154,7 +154,7 @@ impl ButtonAction {
             ButtonAction::MiddleClick => [0x20, 0x04, 0x00, 0x00],
             ButtonAction::Backward => [0x20, 0x08, 0x00, 0x00],
             ButtonAction::Forward => [0x20, 0x10, 0x00, 0x00],
-            ButtonAction::Disabled => [0xFF, 0x00, 0x00, 0x00],
+            ButtonAction::Disabled => [0x20, 0x00, 0x00, 0x00],
             ButtonAction::Custom(raw) => *raw,
         }
     }
@@ -167,7 +167,7 @@ impl ButtonAction {
                 (0x20, 0x04, 0x00, 0x00) => Some(ButtonAction::MiddleClick),
                 (0x20, 0x08, 0x00, 0x00) => Some(ButtonAction::Backward),
                 (0x20, 0x10, 0x00, 0x00) => Some(ButtonAction::Forward),
-                (0xFF, 0x00, 0x00, 0x00) => Some(ButtonAction::Disabled),
+                (0x20, 0x00, 0x00, 0x00) => Some(ButtonAction::Disabled),
                 (b0, b1, b2, b3) => Some(ButtonAction::Custom([b0, b1, b2, b3])),
             }
         } else {
