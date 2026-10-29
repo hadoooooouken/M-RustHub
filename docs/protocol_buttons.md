@@ -7,10 +7,8 @@ Button remapping for the **MCHOSE G3 V2** mouse (both wired `PID 0x418C` and wir
 Once written to flash, bindings persist across power cycles, device reboots, and operating systems without requiring any background resident daemon, hook, or driver software (Set & Forget).
 
 > [!IMPORTANT]
-> **Controller Architecture Note:**
-> An earlier draft of this documentation incorrectly assumed a generic Nordic/Telink `0x4D` report format. Live hardware validation and reverse-engineering of the official MCHOSE web driver (`https://www.mchose.com.cn/gmouse/`) confirmed that the MCHOSE G3 V2 uses a **YiJiaXun (YJX)** OEM microcontroller.
-> 
-> The YJX protocol uses **Interface 2** with the standard `0x55` magic frame, Command `0x08` (Read Keymap), and Command `0x09` (Write Keymap), identical to the rest of the mouse configuration protocol (DPI, polling rate, debounce, sleep).
+> **Protocol Note:**
+> Button remapping uses **Interface 2** with the standard `0x55` magic frame, Command `0x08` (Read Keymap), and Command `0x09` (Write Keymap), identical to the rest of the mouse configuration protocol (DPI, polling rate, debounce, sleep). This was confirmed on hardware and against the official MCHOSE web driver (`https://www.mchose.com.cn/gmouse/`).
 
 ---
 
@@ -21,8 +19,8 @@ Once written to flash, bindings persist across power cycles, device reboots, and
   - Wired Mode: `0x418C`
   - 2.4G Wireless Dongle: `0x4245`
 - **HID Interfaces:**
-  - **Interface 0:** Standard HID Mouse (Motion, LMB, RMB, MMB, Wheel)
-  - **Interface 1:** Standard HID Keyboard (Emitted hotkeys and keystrokes)
+  - **Interface 0:** HID Mouse, plus Consumer Control, System Control and a vendor-defined collection
+  - **Interface 1:** HID Keyboard, plus Consumer Control, System Control and two vendor-defined collections
   - **Interface 2:** Vendor Configuration Interface
     - Usage Page: `0xFF01` (Vendor-defined)
     - Usage: `0x0010`
@@ -33,7 +31,7 @@ Once written to flash, bindings persist across power cycles, device reboots, and
 
 ## 3. Command Protocol Framing (`0x55` Header)
 
-All configuration packets adhere to the standard MCHOSE YJX binary frame structure:
+All configuration packets adhere to the standard MCHOSE binary frame structure:
 
 ```text
 +---------+---------+---------+---------+---------+---------+---------+---------+--------------------+
@@ -139,11 +137,12 @@ Format: `[0x20, button_mask, 0x00, 0x00]`
 - **Middle Click (MMB):** `[32, 4, 0, 0]` (`20 04 00 00`)
 - **Backward (Mouse 4):** `[32, 8, 0, 0]` (`20 08 00 00`)
 - **Forward (Mouse 5):** `[32, 16, 0, 0]` (`20 10 00 00`)
+- **Disable:** `[32, 0, 0, 0]` (`20 00 00 00`) — mouse action with an empty button mask
 
-### 7.2 Disabled Button (Prefix `0xFF` / 255)
-- **Disable:** `[255, 0, 0, 0]` (`FF 00 00 00`)
+> [!NOTE]
+> The `Disable` encoding is taken from the official web driver keycode table (`"Disable"` / `"forbidden"`: `type 32, code 0, 0, 0`) and verified on hardware: a button mapped to it produces no input.
 
-### 7.3 Sensor & Wheel Actions (Prefix `0x21` / 33)
+### 7.2 Sensor & Wheel Actions (Prefix `0x21` / 33)
 - **DPI Cycle (Loop):** `[33, 85, 0, 0]` (`21 55 00 00`)
 - **Scroll Up:** `[33, 56, 1, 0]` (`21 38 01 00`)
 - **Scroll Down:** `[33, 56, 255, 0]` (`21 38 FF 00`)
