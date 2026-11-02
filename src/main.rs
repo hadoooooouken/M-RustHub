@@ -215,7 +215,12 @@ fn handle_cli(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
                 match mouse.get_config() {
                     Ok(cfg) => {
                         println!("\nConfiguration:");
-                        println!("  Polling Rate:     {}", cfg.report_rate);
+                        if mouse.info.is_wireless {
+                            println!("  Polling Rate:     {}", cfg.report_rate);
+                        } else {
+                            // Firmware forces 1000 Hz over USB cable; stored rate is for 2.4G only
+                            println!("  Polling Rate:     1000 Hz (fixed in wired mode, 2.4G: {})", cfg.report_rate);
+                        }
                         println!("  Active DPI Stage: #{} of {}", cfg.active_dpi_stage, cfg.dpi_stages_count);
                         for (i, dpi) in cfg.dpi_stages.iter().take(cfg.dpi_stages_count).enumerate() {
                             let mark = if i + 1 == cfg.active_dpi_stage { " <-- ACTIVE" } else { "" };
@@ -271,6 +276,9 @@ fn handle_cli(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
             println!("Setting polling rate to {}...", pr);
             mouse.set_polling_rate(pr)?;
             println!("✓ Polling rate successfully set to {}", pr);
+            if !mouse.info.is_wireless {
+                println!("  Note: wired connection always polls at 1000 Hz; this rate applies in 2.4G wireless mode.");
+            }
         }
 
         Commands::SetDebounce { ms } => {

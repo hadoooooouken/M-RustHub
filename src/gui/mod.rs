@@ -1950,12 +1950,25 @@ impl App {
                                             card_ui.set_width(card_ui.available_width());
                                             card_ui.set_min_height(96.0);
                                             card_ui.vertical(|ui| {
-                                                ui.label(
-                                                    RichText::new("POLLING RATE")
-                                                        .font(font_section_title())
-                                                        .strong()
-                                                        .color(COLOR_TEXT_PRIMARY),
-                                                );
+                                                // Firmware forces 1000 Hz over USB cable; the stored rate
+                                                // only applies to 2.4G, so the official driver locks the
+                                                // selector to 1000 in wired mode without rewriting it.
+                                                let wired_locked = !self.is_wireless;
+                                                ui.horizontal(|ui| {
+                                                    ui.label(
+                                                        RichText::new("POLLING RATE")
+                                                            .font(font_section_title())
+                                                            .strong()
+                                                            .color(COLOR_TEXT_PRIMARY),
+                                                    );
+                                                    if wired_locked {
+                                                        ui.label(
+                                                            RichText::new("Fixed in wired mode")
+                                                                .font(font_small_caption())
+                                                                .color(COLOR_TEXT_MUTED),
+                                                        );
+                                                    }
+                                                });
                                                 ui.add_space(10.0);
 
                                                 egui::Frame::new()
@@ -1977,11 +1990,25 @@ impl App {
                                                         ui.horizontal(|ui| {
                                                             ui.spacing_mut().item_spacing = Vec2::ZERO;
                                                             for (rate, val_str) in rates {
-                                                                let is_selected = self.config.report_rate == rate;
+                                                                let is_selected = if wired_locked {
+                                                                    rate == PollingRate::Hz1000
+                                                                } else {
+                                                                    self.config.report_rate == rate
+                                                                };
+                                                                let sense = if wired_locked {
+                                                                    egui::Sense::hover()
+                                                                } else {
+                                                                    egui::Sense::click()
+                                                                };
                                                                 let (rect, resp) = ui.allocate_exact_size(
                                                                     Vec2::new(seg_w, 52.0),
-                                                                    egui::Sense::click(),
+                                                                    sense,
                                                                 );
+                                                                let resp = if wired_locked {
+                                                                    resp.on_hover_text("USB wired connection always polls at 1000 Hz")
+                                                                } else {
+                                                                    resp
+                                                                };
                                                                 if resp.clicked() && !is_selected {
                                                                     self.config.report_rate = rate;
                                                                     self.has_unsaved_changes = true;
@@ -1992,7 +2019,7 @@ impl App {
                                                                     ui.painter().rect_filled(glow, CornerRadius::same(7), COLOR_ACCENT_GLOW);
                                                                     ui.painter().rect(rect, CornerRadius::same(6), COLOR_ACCENT, Stroke::NONE, StrokeKind::Inside);
                                                                     COLOR_TEXT_ON_ACCENT
-                                                                } else if resp.hovered() {
+                                                                } else if resp.hovered() && !wired_locked {
                                                                     COLOR_TEXT_PRIMARY
                                                                 } else {
                                                                     COLOR_TEXT_MUTED
@@ -3529,6 +3556,36 @@ mod tests {
         out.textures_delta.clear();
 
         assert_eq!(app.config.report_rate, PollingRate::Hz500);
+    }
+
+    #[test]
+    fn test_polling_rate_wired_keeps_stored_wireless_rate() {
+        let ctx = egui::Context::default();
+        setup_fonts(&ctx);
+
+        let raw_input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(680.0, 700.0),
+            )),
+            ..Default::default()
+        };
+
+        let mut app = create_test_app();
+        app.is_wireless = false;
+        app.config.report_rate = PollingRate::Hz500;
+        app.saved_config = app.config.clone();
+
+        let mut out = ctx.run_ui(raw_input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                app.render_ui(ui);
+            });
+        });
+        out.textures_delta.clear();
+
+        // Wired display is locked to 1000 Hz, but the stored 2.4G rate must not be rewritten
+        assert_eq!(app.config.report_rate, PollingRate::Hz500);
+        assert!(!app.has_unsaved_changes);
     }
 
     #[test]
